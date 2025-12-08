@@ -8,20 +8,21 @@
     "dev": "ts-node-dev src/index.ts"
   },
   "dependencies": {
-    "@google/genai": "latest",
-    "bullmq": "^5.65.1",
+    "express": "^4.18.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "ioredis": "^5.8.2",
-    "pg": "^8.11.3"
+    "@google/genai": "latest",
+    "pg": "^8.11.3",
+    "bullmq": "^5.1.0",
+    "ioredis": "^5.3.2",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
+    "typescript": "^5.3.3",
     "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
     "@types/node": "^20.10.6",
     "@types/pg": "^8.10.9",
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^5.3.3"
+    "ts-node-dev": "^2.0.0"
   }
 }

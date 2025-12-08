@@ -1,7 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { z } from "zod";
+import { PROMPTS } from "../config/prompts";
+import { aiCircuitBreaker } from "../utils/circuitBreaker";
 
 // Fix: Use Gemini API initialized with process.env.API_KEY
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+// --- Types & Interfaces ---
 
 export interface Flashcard {
   id: string;
@@ -25,7 +30,33 @@ export interface StudySet {
   example_quiz_questions: QuizQuestion[];
 }
 
-const studySetSchema = {
+// --- Zod Schemas for Runtime Validation ---
+
+const FlashcardSchema = z.object({
+  id: z.string().default(() => Math.random().toString(36).substring(7)),
+  front: z.string(),
+  back: z.string(),
+  difficulty: z.enum(['easy', 'medium', 'hard']).default('medium'),
+  tags: z.array(z.string()).default([])
+});
+
+const QuizQuestionSchema = z.object({
+  question: z.string(),
+  choices: z.array(z.string()),
+  answer_index: z.number()
+});
+
+const StudySetSchema = z.object({
+  topic: z.string(),
+  summary: z.string(),
+  estimated_study_time_minutes: z.number(),
+  flashcards: z.array(FlashcardSchema),
+  example_quiz_questions: z.array(QuizQuestionSchema)
+});
+
+// --- Gemini Generation Schema ---
+
+const geminiStudySetSchema = {
   type: Type.OBJECT,
   properties: {
     topic: { type: Type.STRING, description: "The topic of the study set" },
@@ -63,39 +94,77 @@ const studySetSchema = {
   required: ["topic", "summary", "estimated_study_time_minutes", "flashcards", "example_quiz_questions"]
 };
 
+// --- Helper Functions ---
+
+const cleanJson = (text: string): string => {
+  // Removes markdown code blocks (```json ... ```) if present
+  return text.replace(/```json\n?|```/g, '').trim();
+};
+
 export const generateFlashcards = async (topic: string): Promise<StudySet> => {
-  const prompt = `Generate a study set for the topic: "${topic}".
+  // Wrap the entire operation in a Circuit Breaker
+  return aiCircuitBreaker.execute(async () => {
+    let currentPrompt = PROMPTS.generateStudySet(topic);
+    let attempts = 0;
+    const MAX_RETRIES = 2;
 
-Format constraints:
-- Flashcards: 4-12 items.
-- Front: Question (1 sentence).
-- Back: Answer (max 60 words).
-- Summary: 2-4 sentences.
-- Quiz: 3 multiple choice questions.
-`;
+    while (attempts <= MAX_RETRIES) {
+      try {
+        console.log(`🤖 AI Generation Attempt ${attempts + 1}/${MAX_RETRIES + 1} for "${topic}"`);
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: studySetSchema,
-        temperature: 0.2, // Low temperature for factual consistency
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: currentPrompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: geminiStudySetSchema,
+            temperature: 0.2 + (attempts * 0.1), // Slightly increase temp on retries
+          }
+        });
+
+        const text = response.text;
+        
+        if (!text) {
+          throw new Error("Empty response from Gemini");
+        }
+
+        // 1. Parse JSON (Basic Syntax Check)
+        let rawData;
+        try {
+          rawData = JSON.parse(cleanJson(text));
+        } catch (e) {
+          throw new Error("Invalid JSON syntax received from model");
+        }
+
+        // 2. Validate Structure (Zod Schema Check)
+        const validationResult = StudySetSchema.safeParse(rawData);
+
+        if (!validationResult.success) {
+          const errorMsg = validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          throw new Error(`Schema Validation Failed: ${errorMsg}`);
+        }
+
+        // 3. Success! Return data
+        return validationResult.data as StudySet;
+
+      } catch (error: any) {
+        attempts++;
+        console.warn(`⚠️ Attempt ${attempts} failed: ${error.message}`);
+        
+        if (attempts > MAX_RETRIES) {
+           throw error; // Let the queue worker handle the final failure
+        }
+
+        // Auto-healing: Feed the error back to the model
+        currentPrompt = `${PROMPTS.generateStudySet(topic)}
+        
+        IMPORTANT: Your previous attempt failed. 
+        Error details: ${error.message}
+        
+        Please correct the JSON output. Ensure strict adherence to the schema.`;
       }
-    });
-
-    const text = response.text;
-    
-    if (!text) {
-      throw new Error("Empty response from Gemini");
     }
 
-    const data = JSON.parse(text) as StudySet;
-    return data;
-
-  } catch (error) {
-    console.error("Gemini Generation Error:", error);
-    throw error;
-  }
+    throw new Error("Unexpected end of retry loop");
+  });
 };
