@@ -4,7 +4,6 @@ exports.generateFlashcards = void 0;
 const genai_1 = require("@google/genai");
 // Fix: Use Gemini API initialized with process.env.API_KEY
 const ai = new genai_1.GoogleGenAI({ apiKey: process.env.API_KEY });
-console.log("from ai.ts", process.env.API_KEY);
 const studySetSchema = {
     type: genai_1.Type.OBJECT,
     properties: {

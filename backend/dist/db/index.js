@@ -1,12 +1,58 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.saveStudySet = void 0;
+exports.getStudySetById = exports.getRecentStudySets = exports.saveStudySet = exports.initDB = void 0;
 const pg_1 = require("pg");
 const pool = new pg_1.Pool({
     connectionString: process.env.DATABASE_URL,
-    // Allow connection even if env var is missing during dev/test to avoid crash on import
-    // But operations will fail naturally
 });
+const initDB = async () => {
+    if (!process.env.DATABASE_URL) {
+        console.log("⚠️  DATABASE_URL missing. Skipping DB initialization.");
+        return;
+    }
+    let retries = 5;
+    while (retries > 0) {
+        try {
+            const client = await pool.connect();
+            try {
+                console.log("📦 Initializing Database Tables...");
+                // Create Study Sets Table
+                await client.query(`
+          CREATE TABLE IF NOT EXISTS study_sets (
+            id SERIAL PRIMARY KEY,
+            topic TEXT NOT NULL,
+            summary TEXT,
+            estimated_study_time_minutes INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
+                // Create Flashcards Table
+                await client.query(`
+          CREATE TABLE IF NOT EXISTS flashcards (
+            id SERIAL PRIMARY KEY,
+            set_id INTEGER REFERENCES study_sets(id) ON DELETE CASCADE,
+            front TEXT NOT NULL,
+            back TEXT NOT NULL,
+            difficulty TEXT,
+            tags TEXT[]
+          );
+        `);
+                console.log("✅ Database tables ready.");
+                return; // Success, exit function
+            }
+            finally {
+                client.release();
+            }
+        }
+        catch (error) {
+            console.log(`⚠️ Database not ready yet. Retrying in 2s... (${retries} attempts left)`);
+            retries--;
+            await new Promise(res => setTimeout(res, 2000));
+        }
+    }
+    throw new Error("❌ Could not connect to database after multiple attempts. Please ensure Docker container is running.");
+};
+exports.initDB = initDB;
 const saveStudySet = async (data) => {
     if (!process.env.DATABASE_URL) {
         console.warn("DATABASE_URL not set. Skipping DB save.");
@@ -37,3 +83,55 @@ const saveStudySet = async (data) => {
     }
 };
 exports.saveStudySet = saveStudySet;
+const getRecentStudySets = async (limit = 5) => {
+    if (!process.env.DATABASE_URL)
+        return [];
+    try {
+        const res = await pool.query(`SELECT id, topic, summary, estimated_study_time_minutes, created_at 
+       FROM study_sets 
+       ORDER BY id DESC 
+       LIMIT $1`, [limit]);
+        return res.rows;
+    }
+    catch (error) {
+        console.error("Failed to fetch history:", error);
+        // Return empty array instead of crashing if table doesn't exist yet
+        return [];
+    }
+};
+exports.getRecentStudySets = getRecentStudySets;
+const getStudySetById = async (id) => {
+    if (!process.env.DATABASE_URL)
+        return null;
+    const client = await pool.connect();
+    try {
+        // 1. Get Set Info
+        const setRes = await client.query('SELECT * FROM study_sets WHERE id = $1', [id]);
+        if (setRes.rows.length === 0)
+            return null;
+        const set = setRes.rows[0];
+        // 2. Get Flashcards
+        const cardsRes = await client.query('SELECT * FROM flashcards WHERE set_id = $1', [id]);
+        // Map DB rows back to TypeScript interfaces
+        const flashcards = cardsRes.rows.map(row => ({
+            id: row.id.toString(),
+            front: row.front,
+            back: row.back,
+            difficulty: row.difficulty,
+            tags: row.tags || []
+        }));
+        // Placeholder for quizzes since they aren't in DB yet
+        const example_quiz_questions = [];
+        return {
+            topic: set.topic,
+            summary: set.summary,
+            estimated_study_time_minutes: set.estimated_study_time_minutes,
+            flashcards,
+            example_quiz_questions
+        };
+    }
+    finally {
+        client.release();
+    }
+};
+exports.getStudySetById = getStudySetById;

@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment variables (VERY IMPORTANT)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+backend/.env
+frontend/.env
+
+# Build outputs
+/dist
+/build
+/out
+/coverage
+/.next/
+/.nuxt/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs
+*.log
+
+# IDE & OS specific files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker volumes & data (Don't commit your actual database files!)
+postgres_data/
+flashmind_data/
+mongo_data/
+redis_data/
+
+# Testing
+playwright-report/
+test-results/
+
+# Temporary files
+*.swp
+*.swo
+*~

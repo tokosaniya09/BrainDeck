@@ -2,7 +2,6 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 // Fix: Use Gemini API initialized with process.env.API_KEY
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-console.log("from ai.ts", process.env.API_KEY);
 
 export interface Flashcard {
   id: string;

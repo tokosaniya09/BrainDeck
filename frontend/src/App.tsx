@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { generateStudySet } from './api/client';
+import React, { useState, useEffect } from 'react';
+import { generateStudySet, fetchHistory, fetchStudySet, fetchQueueStatus, HistoryItem } from './api/client';
 import { StudySet } from './types';
 import Flashcard from './components/Flashcard';
 import Quiz from './components/Quiz';
@@ -12,33 +12,86 @@ import {
   ChevronRight, 
   RotateCcw,
   LayoutGrid,
-  ListChecks
+  ListChecks,
+  History,
+  Database,
+  Hourglass
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function App() {
   const [topic, setTopic] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState<string>(''); // 'queued', 'processing', etc.
   const [studySet, setStudySet] = useState<StudySet | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'cards' | 'quiz'>('cards');
+  
+  // Data Visibility Features
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [queueStats, setQueueStats] = useState<any>(null);
+
+  useEffect(() => {
+    loadHistory();
+    const interval = setInterval(loadQueueStats, 5000);
+    loadQueueStats();
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadHistory = async () => {
+    try {
+      const data = await fetchHistory();
+      setHistory(data);
+    } catch (e) {
+      console.error("Failed to load history", e);
+    }
+  };
+
+  const loadQueueStats = async () => {
+    try {
+      const stats = await fetchQueueStatus();
+      setQueueStats(stats);
+    } catch (e) {
+      console.error("Failed to load stats", e);
+    }
+  };
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!topic.trim()) return;
 
     setIsLoading(true);
+    setLoadingStatus('initiating');
     setError(null);
     setStudySet(null);
     setActiveTab('cards');
 
     try {
-      const data = await generateStudySet(topic);
+      const data = await generateStudySet(topic, (status) => {
+        setLoadingStatus(status);
+      });
       setStudySet(data);
+      loadHistory(); // Refresh history after new generation
     } catch (err: any) {
       setError(err.message || "Failed to generate content. Please try again.");
     } finally {
       setIsLoading(false);
+      setLoadingStatus('');
+    }
+  };
+
+  const loadSetFromHistory = async (id: number) => {
+    setIsLoading(true);
+    setLoadingStatus('loading_history');
+    setStudySet(null);
+    try {
+      const data = await fetchStudySet(id);
+      setStudySet(data);
+    } catch (err) {
+      setError("Could not load this study set.");
+    } finally {
+      setIsLoading(false);
+      setLoadingStatus('');
     }
   };
 
@@ -46,6 +99,17 @@ function App() {
     setTopic('');
     setStudySet(null);
     setError(null);
+    loadHistory();
+  };
+
+  const getLoadingMessage = () => {
+    switch (loadingStatus) {
+      case 'queued': return 'Waiting in queue...';
+      case 'processing': return 'AI is generating content...';
+      case 'loading_history': return 'Loading from database...';
+      case 'initiating': return 'Contacting server...';
+      default: return 'Generating your study plan...';
+    }
   };
 
   return (
@@ -62,14 +126,25 @@ function App() {
             </div>
             <span className="font-bold text-xl tracking-tight text-slate-800">FlashMind AI</span>
           </div>
-          {studySet && (
-             <button 
-               onClick={resetApp}
-               className="text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors flex items-center gap-1"
-             >
-               <RotateCcw className="w-4 h-4" /> New Topic
-             </button>
-          )}
+          
+          <div className="flex items-center gap-4">
+             {/* Redis/Queue Indicator */}
+             {queueStats && (
+               <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded">
+                  <Database className="w-3 h-3" />
+                  <span>Queue: {queueStats.active} act / {queueStats.waiting} wait</span>
+               </div>
+             )}
+
+             {studySet && (
+               <button 
+                 onClick={resetApp}
+                 className="text-sm font-medium text-slate-500 hover:text-indigo-600 transition-colors flex items-center gap-1"
+               >
+                 <RotateCcw className="w-4 h-4" /> New Topic
+               </button>
+             )}
+          </div>
         </div>
       </header>
 
@@ -82,11 +157,11 @@ function App() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="max-w-2xl mx-auto text-center mt-12 sm:mt-20"
+              className="max-w-2xl mx-auto text-center mt-8 sm:mt-16"
             >
               <div className="inline-flex items-center px-3 py-1 rounded-full bg-indigo-50 text-indigo-600 text-sm font-medium mb-6">
                 <Sparkles className="w-4 h-4 mr-2" />
-                Powered by Gemini 2.5
+                Powered by Gemini 2.5 + Redis
               </div>
               <h1 className="text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight mb-6 leading-tight">
                 Turn any topic into <br/>
@@ -98,7 +173,7 @@ function App() {
                 Enter a subject, and our AI will instantly craft a comprehensive study set with flashcards and quizzes tailored just for you.
               </p>
 
-              <form onSubmit={handleGenerate} className="relative max-w-lg mx-auto">
+              <form onSubmit={handleGenerate} className="relative max-w-lg mx-auto mb-16">
                 <input
                   type="text"
                   value={topic}
@@ -116,6 +191,34 @@ function App() {
                 </button>
               </form>
               
+              {/* History Section - Proves Postgres Data */}
+              {history.length > 0 && (
+                <div className="text-left max-w-lg mx-auto">
+                  <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <History className="w-4 h-4" /> Recent Study Sets (From DB)
+                  </h3>
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm divide-y divide-slate-100">
+                    {history.map((item) => (
+                      <div 
+                        key={item.id}
+                        onClick={() => loadSetFromHistory(item.id)}
+                        className="p-4 hover:bg-slate-50 transition-colors cursor-pointer group flex items-center justify-between"
+                      >
+                         <div>
+                           <div className="font-medium text-slate-800 group-hover:text-indigo-600 transition-colors">
+                             {item.topic}
+                           </div>
+                           <div className="text-xs text-slate-500 mt-1 line-clamp-1">
+                             {item.summary.substring(0, 60)}...
+                           </div>
+                         </div>
+                         <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-indigo-400" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {error && (
                 <div className="mt-6 p-4 bg-red-50 text-red-700 rounded-xl text-sm font-medium border border-red-100">
                   {error}
@@ -133,8 +236,18 @@ function App() {
               className="flex flex-col items-center justify-center mt-32"
             >
               <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mb-4" />
-              <p className="text-lg font-medium text-slate-600">Generating your study plan...</p>
-              <p className="text-sm text-slate-400 mt-2">Crafting flashcards • Designing quiz • Summarizing concepts</p>
+              <p className="text-lg font-medium text-slate-600">{getLoadingMessage()}</p>
+              
+              {loadingStatus === 'queued' && (
+                <p className="text-sm text-amber-500 mt-2 flex items-center gap-1">
+                  <Hourglass className="w-3 h-3" /> High traffic, your job is in line...
+                </p>
+              )}
+              {loadingStatus === 'processing' && (
+                <p className="text-sm text-indigo-400 mt-2 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" /> Gemini is crafting your flashcards...
+                </p>
+              )}
             </motion.div>
           )}
 
