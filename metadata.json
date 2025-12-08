@@ -1,0 +1,5 @@
+{
+  "name": "FlashMind AI",
+  "description": "An AI-powered study aid that generates flashcards and quizzes from any topic using Gemini.",
+  "requestFramePermissions": []
+}
