@@ -3,51 +3,61 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
+require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const queue_1 = require("./services/queue");
 const db_1 = require("./db");
 const ai_1 = require("./services/ai");
-// Validation: Check if API_KEY is set
+const auth_1 = __importDefault(require("./routes/auth"));
+const auth_2 = require("./middleware/auth");
 if (!process.env.API_KEY) {
     console.error("❌ FATAL: API_KEY is missing in backend/.env file.");
-    console.error("Please create a .env file in the backend folder with API_KEY=your_gemini_key");
+}
+if (!process.env.GOOGLE_CLIENT_ID) {
+    console.warn("⚠️ WARNING: GOOGLE_CLIENT_ID is missing in backend/.env file. Google Login will fail.");
 }
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
-// Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok' });
 });
+// --- Auth Routes ---
+app.use('/api/auth', auth_1.default);
 // --- Job Queue Endpoints ---
-app.post('/api/generate', async (req, res) => {
+// Apply optionalAuth: If user is logged in, req.user is set. If not, req.user is undefined.
+app.post('/api/generate', auth_2.optionalAuth, async (req, res) => {
     try {
         if (!process.env.API_KEY) {
             throw new Error("API_KEY is not configured on the server.");
         }
         const { topic } = req.body;
+        // Check if user is logged in (req.user comes from middleware)
+        const userId = req.user?.id;
         if (!topic || typeof topic !== 'string') {
             return res.status(400).json({ error: 'Topic is required and must be a string' });
         }
-        // 1. Generate Embedding for the query (Cost: negligible)
-        // We do this BEFORE the queue so we can check the semantic cache
+        // 1. Generate Embedding
         let embedding;
         try {
             embedding = await (0, ai_1.generateEmbedding)(topic);
         }
         catch (e) {
             console.error("Embedding generation failed, falling back to non-vector flow:", e);
-            // Fallback: If embedding fails, just push to queue without caching check (or use simple text match if we kept it)
-            const jobId = await (0, queue_1.addJob)(topic, undefined);
+            // Pass userId (number or undefined)
+            const jobId = await (0, queue_1.addJob)(topic, userId, undefined);
             return res.status(202).json({ jobId, status: 'pending' });
         }
-        // 2. SEMANTIC CACHE CHECK
-        const existingSet = await (0, db_1.findSimilarStudySet)(embedding);
+        // 2. SEMANTIC CACHE CHECK via Repository
+        const existingSet = await db_1.studySetRepository.findBySemantics(embedding, 0.25);
         if (existingSet) {
+            // IMPORTANT: Cache Hit!
+            // ONLY record activity if user is logged in
+            if (existingSet.id && userId) {
+                await db_1.studySetRepository.recordActivity(userId, existingSet.id);
+            }
             return res.status(200).json({
                 status: 'completed',
                 message: 'Retrieved from semantic cache',
@@ -55,9 +65,9 @@ app.post('/api/generate', async (req, res) => {
             });
         }
         // 3. Cache Miss: Add to Queue
-        // We pass the embedding to the job so the worker doesn't need to regenerate it for the DB
-        const jobId = await (0, queue_1.addJob)(topic, embedding);
-        console.log(`Job accepted: ${jobId} for topic: ${topic}`);
+        // We pass userId (number or undefined) to the job
+        const jobId = await (0, queue_1.addJob)(topic, userId, embedding);
+        console.log(`Job accepted: ${jobId} for topic: ${topic} (User: ${userId || 'Guest'})`);
         res.status(202).json({
             jobId,
             status: 'pending',
@@ -96,9 +106,11 @@ app.get('/api/queue-status', async (req, res) => {
     }
 });
 // --- Persistent Data Endpoints ---
-app.get('/api/history', async (req, res) => {
+// Require Auth: Only logged in users have history
+app.get('/api/history', auth_2.requireAuth, async (req, res) => {
     try {
-        const sets = await (0, db_1.getRecentStudySets)(10);
+        const userId = req.user.id; // Guaranteed by requireAuth
+        const sets = await db_1.studySetRepository.getUserHistory(userId, 10);
         res.json(sets);
     }
     catch (error) {
@@ -106,20 +118,23 @@ app.get('/api/history', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch history' });
     }
 });
-app.get('/api/sets/:id', async (req, res) => {
+app.get('/api/sets/:id', auth_2.optionalAuth, async (req, res) => {
     try {
         const id = parseInt(req.params.id);
-        const set = await (0, db_1.getStudySetById)(id);
+        const userId = req.user?.id;
+        const set = await db_1.studySetRepository.getById(id);
         if (!set)
             return res.status(404).json({ error: "Study set not found" });
+        // Only update accessed_at if user is logged in
+        if (userId) {
+            await db_1.studySetRepository.recordActivity(userId, id);
+        }
         res.json(set);
     }
     catch (error) {
         res.status(500).json({ error: 'Failed to fetch study set' });
     }
 });
-// Initialize DB and start server
-// We await initDB so we don't start the server if the DB is broken
 (0, db_1.initDB)()
     .then(() => {
     app.listen(PORT, () => {

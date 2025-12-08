@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "main": "dist/index.js",
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "node -r dotenv/config dist/index.js",
     "build": "tsc",
-    "dev": "ts-node-dev src/index.ts"
+    "dev": "ts-node-dev -r dotenv/config src/index.ts",
+    "migrate": "node-pg-migrate up --envPath .env",
+    "migrate:create": "node-pg-migrate create --envPath .env"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -15,7 +17,11 @@
     "pg": "^8.11.3",
     "bullmq": "^5.1.0",
     "ioredis": "^5.3.2",
-    "zod": "^3.22.4"
+    "zod": "^3.22.4",
+    "node-pg-migrate": "^6.2.2",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "google-auth-library": "^9.6.3"
   },
   "devDependencies": {
     "typescript": "^5.3.3",
@@ -23,6 +29,8 @@
     "@types/cors": "^2.8.17",
     "@types/node": "^20.10.6",
     "@types/pg": "^8.10.9",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.5",
     "ts-node-dev": "^2.0.0"
   }
 }

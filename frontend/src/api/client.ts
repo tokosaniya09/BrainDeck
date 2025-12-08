@@ -1,7 +1,7 @@
 import { StudySet } from "../types";
 
 interface JobResponse {
-  jobId?: string; // Optional now, because cache hits might not have a job ID
+  jobId?: string;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   result?: StudySet;
   error?: string;
@@ -15,23 +15,74 @@ export interface HistoryItem {
   created_at?: string;
 }
 
-const POLL_INTERVAL_MS = 2000; // Check every 2 seconds
-const MAX_ATTEMPTS = 60; // Timeout after ~120 seconds (Increased for safety)
+const POLL_INTERVAL_MS = 2000;
+const MAX_ATTEMPTS = 60;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// --- Auth Headers ---
+const getHeaders = () => {
+  const headers: any = {
+    'Content-Type': 'application/json',
+  };
+  const token = localStorage.getItem('token');
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
+// --- Auth API Calls ---
+export const loginUser = async (email: string, password: string): Promise<{ token: string, user: any }> => {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Login failed');
+  }
+  return res.json();
+};
+
+export const signupUser = async (email: string, password: string, name: string): Promise<{ token: string, user: any }> => {
+  const res = await fetch('/api/auth/signup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, name })
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Signup failed');
+  }
+  return res.json();
+};
+
+export const loginWithGoogle = async (credential: string): Promise<{ token: string, user: any }> => {
+  const res = await fetch('/api/auth/google', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential })
+  });
+  
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Google login failed');
+  }
+  return res.json();
+};
+
 
 export const generateStudySet = async (
   topic: string, 
   onStatusUpdate?: (status: string) => void
 ): Promise<StudySet> => {
-  // 1. Submit the job (OR get instant result)
   if (onStatusUpdate) onStatusUpdate('initiating');
   
   const startResponse = await fetch('/api/generate', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getHeaders(),
     body: JSON.stringify({ topic }),
   });
 
@@ -42,26 +93,25 @@ export const generateStudySet = async (
 
   const initialData: JobResponse = await startResponse.json();
 
-  // ⚡ Optimization: Check for Immediate Cache Hit
   if (initialData.status === 'completed' && initialData.result) {
     if (onStatusUpdate) onStatusUpdate('completed');
     return initialData.result;
   }
 
-  // If not cached, we need a job ID to poll
   const jobId = initialData.jobId;
   if (!jobId) {
     throw new Error("No Job ID received from server");
   }
   
-  // 2. Poll for results
   let attempts = 0;
   
   while (attempts < MAX_ATTEMPTS) {
     attempts++;
     
     try {
-      const statusResponse = await fetch(`/api/jobs/${jobId}`);
+      const statusResponse = await fetch(`/api/jobs/${jobId}`, {
+        headers: getHeaders()
+      });
       
       if (!statusResponse.ok) {
          throw new Error('Failed to check job status');
@@ -78,18 +128,15 @@ export const generateStudySet = async (
         throw new Error(job.error || 'Generation failed on server');
       }
       
-      // Notify UI of current state
       if (onStatusUpdate) {
         if (job.status === 'pending') onStatusUpdate('queued');
         else if (job.status === 'processing') onStatusUpdate('processing');
       }
       
-      // Still pending or processing, wait and retry
       await sleep(POLL_INTERVAL_MS);
       
     } catch (err) {
       console.warn(`Polling attempt ${attempts} failed:`, err);
-      // We continue polling even if one request fails (transient network error)
       await sleep(POLL_INTERVAL_MS); 
     }
   }
@@ -98,13 +145,18 @@ export const generateStudySet = async (
 };
 
 export const fetchHistory = async (): Promise<HistoryItem[]> => {
-  const res = await fetch('/api/history');
+  const res = await fetch('/api/history', {
+    headers: getHeaders()
+  });
+  if (res.status === 401) return []; // Not logged in
   if (!res.ok) throw new Error("Failed to fetch history");
   return res.json();
 };
 
 export const fetchStudySet = async (id: number): Promise<StudySet> => {
-  const res = await fetch(`/api/sets/${id}`);
+  const res = await fetch(`/api/sets/${id}`, {
+    headers: getHeaders()
+  });
   if (!res.ok) throw new Error("Failed to fetch study set");
   return res.json();
 };
