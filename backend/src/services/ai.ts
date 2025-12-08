@@ -101,6 +101,20 @@ const cleanJson = (text: string): string => {
   return text.replace(/```json\n?|```/g, '').trim();
 };
 
+export const generateEmbedding = async (text: string): Promise<number[]> => {
+  return aiCircuitBreaker.execute(async () => {
+    const response = await ai.models.embedContent({
+      model: "text-embedding-004",
+      contents: { parts: [{ text }] }
+    });
+    
+    if (!response.embeddings?.[0]?.values) {
+      throw new Error("Failed to generate embedding");
+    }
+    return response.embeddings[0].values;
+  });
+};
+
 export const generateFlashcards = async (topic: string): Promise<StudySet> => {
   // Wrap the entire operation in a Circuit Breaker
   return aiCircuitBreaker.execute(async () => {
@@ -140,7 +154,8 @@ export const generateFlashcards = async (topic: string): Promise<StudySet> => {
         const validationResult = StudySetSchema.safeParse(rawData);
 
         if (!validationResult.success) {
-          const errorMsg = validationResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+          // Use .issues instead of .errors to satisfy Zod typing
+          const errorMsg = validationResult.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
           throw new Error(`Schema Validation Failed: ${errorMsg}`);
         }
 

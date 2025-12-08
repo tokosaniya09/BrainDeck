@@ -1,7 +1,7 @@
 import { StudySet } from "../types";
 
 interface JobResponse {
-  jobId: string;
+  jobId?: string; // Optional now, because cache hits might not have a job ID
   status: 'pending' | 'processing' | 'completed' | 'failed';
   result?: StudySet;
   error?: string;
@@ -24,7 +24,7 @@ export const generateStudySet = async (
   topic: string, 
   onStatusUpdate?: (status: string) => void
 ): Promise<StudySet> => {
-  // 1. Submit the job
+  // 1. Submit the job (OR get instant result)
   if (onStatusUpdate) onStatusUpdate('initiating');
   
   const startResponse = await fetch('/api/generate', {
@@ -40,7 +40,19 @@ export const generateStudySet = async (
     throw new Error(errorData.error || 'Failed to start generation job');
   }
 
-  const { jobId } = await startResponse.json();
+  const initialData: JobResponse = await startResponse.json();
+
+  // ⚡ Optimization: Check for Immediate Cache Hit
+  if (initialData.status === 'completed' && initialData.result) {
+    if (onStatusUpdate) onStatusUpdate('completed');
+    return initialData.result;
+  }
+
+  // If not cached, we need a job ID to poll
+  const jobId = initialData.jobId;
+  if (!jobId) {
+    throw new Error("No Job ID received from server");
+  }
   
   // 2. Poll for results
   let attempts = 0;

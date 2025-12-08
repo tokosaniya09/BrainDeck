@@ -1,5 +1,10 @@
 import { Pool } from 'pg';
 import { StudySet, Flashcard, QuizQuestion } from '../services/ai';
+import pg from 'pg';
+
+// pg automatically converts Postgres arrays to JS arrays.
+// However, pgvector inputs are usually handled as string strings '[1,2,3]' in parameterized queries
+// or we rely on the extension logic. Passing JS arrays usually works with the 'pg' driver.
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -18,19 +23,39 @@ export const initDB = async () => {
       const client = await pool.connect();
       try {
         console.log("📦 Initializing Database Tables...");
+
+        // 1. Enable Vector Extension (Requires pgvector image)
+        try {
+          await client.query('CREATE EXTENSION IF NOT EXISTS vector;');
+        } catch (e) {
+          console.warn("⚠️  Could not create 'vector' extension. Ensure you are using a Postgres image with pgvector installed (e.g., pgvector/pgvector:pg16). Semantic search will fail without it.");
+        }
         
-        // Create Study Sets Table
+        // 2. Create Study Sets Table with Vector Column
+        // text-embedding-004 uses 768 dimensions
         await client.query(`
           CREATE TABLE IF NOT EXISTS study_sets (
             id SERIAL PRIMARY KEY,
             topic TEXT NOT NULL,
             summary TEXT,
             estimated_study_time_minutes INTEGER,
+            embedding vector(768), 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           );
         `);
+        
+        // Add index for faster vector search (HNSW) if it doesn't exist
+        // We use a try/catch here because checking for index existence is verbose in SQL
+        try {
+            await client.query(`
+                CREATE INDEX IF NOT EXISTS study_sets_embedding_idx 
+                ON study_sets USING hnsw (embedding vector_cosine_ops);
+            `);
+        } catch (e) {
+            console.log("Note: Could not create HNSW index (might not have enough data or permissions), skipping.");
+        }
 
-        // Create Flashcards Table
+        // 3. Create Flashcards Table
         await client.query(`
           CREATE TABLE IF NOT EXISTS flashcards (
             id SERIAL PRIMARY KEY,
@@ -47,8 +72,8 @@ export const initDB = async () => {
       } finally {
         client.release();
       }
-    } catch (error) {
-      console.log(`⚠️ Database not ready yet. Retrying in 2s... (${retries} attempts left)`);
+    } catch (error: any) {
+      console.log(`⚠️ Database not ready yet. Retrying in 2s... (${retries} attempts left). Error: ${error.message}`);
       retries--;
       await new Promise(res => setTimeout(res, 2000));
     }
@@ -57,7 +82,7 @@ export const initDB = async () => {
   throw new Error("❌ Could not connect to database after multiple attempts. Please ensure Docker container is running.");
 };
 
-export const saveStudySet = async (data: StudySet) => {
+export const saveStudySet = async (data: StudySet, embedding?: number[]) => {
   if (!process.env.DATABASE_URL) {
     console.warn("DATABASE_URL not set. Skipping DB save.");
     return;
@@ -67,12 +92,18 @@ export const saveStudySet = async (data: StudySet) => {
   try {
     await client.query('BEGIN');
 
-    // 1. Insert Study Set
+    // 1. Insert Study Set with Embedding (if provided)
+    // We cast the array to a string representation for pgvector if needed, but pg usually handles number[] -> vector
     const setRes = await client.query(
-      `INSERT INTO study_sets (topic, summary, estimated_study_time_minutes) 
-       VALUES ($1, $2, $3) 
+      `INSERT INTO study_sets (topic, summary, estimated_study_time_minutes, embedding) 
+       VALUES ($1, $2, $3, $4) 
        RETURNING id`,
-      [data.topic, data.summary, data.estimated_study_time_minutes]
+      [
+        data.topic, 
+        data.summary, 
+        data.estimated_study_time_minutes, 
+        embedding ? JSON.stringify(embedding) : null // pgvector accepts '[1,2,3]' string format
+      ]
     );
     const setId = setRes.rows[0].id;
 
@@ -109,7 +140,6 @@ export const getRecentStudySets = async (limit = 5) => {
     return res.rows;
   } catch (error) {
     console.error("Failed to fetch history:", error);
-    // Return empty array instead of crashing if table doesn't exist yet
     return [];
   }
 };
@@ -148,5 +178,43 @@ export const getStudySetById = async (id: number): Promise<StudySet | null> => {
     };
   } finally {
     client.release();
+  }
+};
+
+// NEW: Check if we have this topic cached using VECTOR SEARCH
+export const findSimilarStudySet = async (embedding: number[]): Promise<StudySet | null> => {
+  if (!process.env.DATABASE_URL) return null;
+
+  try {
+    // Use the cosine distance operator <=>
+    // We set a threshold (e.g., 0.25). 
+    // 0 = Exact match. 1 = Orthogonal.
+    // 0.25 is usually a good starting point for "closely related".
+    
+    const formattedEmbedding = JSON.stringify(embedding);
+
+    const res = await pool.query(
+      `SELECT id, topic, (embedding <=> $1) as distance 
+       FROM study_sets 
+       ORDER BY distance ASC 
+       LIMIT 1`,
+      [formattedEmbedding]
+    );
+    
+    if (res.rows.length > 0) {
+      const bestMatch = res.rows[0];
+      // Check threshold
+      if (bestMatch.distance < 0.25) {
+         console.log(`⚡ Semantic Cache Hit! Found: "${bestMatch.topic}" (Distance: ${bestMatch.distance.toFixed(4)})`);
+         return getStudySetById(bestMatch.id);
+      } else {
+         console.log(`Cache Miss. Nearest topic was "${bestMatch.topic}" but distance ${bestMatch.distance.toFixed(4)} > 0.25`);
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error("Error checking vector cache:", error);
+    return null;
   }
 };

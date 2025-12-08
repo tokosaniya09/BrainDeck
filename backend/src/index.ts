@@ -4,7 +4,10 @@ dotenv.config();
 import express from 'express';
 import cors from 'cors';
 import { addJob, getJobStatus, flashcardQueue } from './services/queue';
-import { getRecentStudySets, getStudySetById, initDB } from './db';
+import { getRecentStudySets, getStudySetById, initDB, findSimilarStudySet } from './db';
+import { generateEmbedding } from './services/ai';
+
+
 
 // Validation: Check if API_KEY is set
 if (!process.env.API_KEY) {
@@ -37,7 +40,31 @@ app.post('/api/generate', async (req, res) => {
       return res.status(400).json({ error: 'Topic is required and must be a string' });
     }
 
-    const jobId = await addJob(topic);
+    // 1. Generate Embedding for the query (Cost: negligible)
+    // We do this BEFORE the queue so we can check the semantic cache
+    let embedding: number[];
+    try {
+      embedding = await generateEmbedding(topic);
+    } catch (e) {
+      console.error("Embedding generation failed, falling back to non-vector flow:", e);
+      // Fallback: If embedding fails, just push to queue without caching check (or use simple text match if we kept it)
+      const jobId = await addJob(topic, undefined); 
+      return res.status(202).json({ jobId, status: 'pending' });
+    }
+
+    // 2. SEMANTIC CACHE CHECK
+    const existingSet = await findSimilarStudySet(embedding);
+    if (existingSet) {
+       return res.status(200).json({
+         status: 'completed',
+         message: 'Retrieved from semantic cache',
+         result: existingSet
+       });
+    }
+
+    // 3. Cache Miss: Add to Queue
+    // We pass the embedding to the job so the worker doesn't need to regenerate it for the DB
+    const jobId = await addJob(topic, embedding);
     
     console.log(`Job accepted: ${jobId} for topic: ${topic}`);
 

@@ -26,8 +26,10 @@ const worker = new Worker(QUEUE_NAME, async (job: Job) => {
     const studySet = await generateFlashcards(job.data.topic);
     
     // B. Save to Database
-    // We await this so if DB fails, the job is marked as failed/retried
-    await saveStudySet(studySet);
+    // We use the embedding passed from the controller (if available)
+    // so we don't have to call the Embedding API again.
+    const embedding = job.data.embedding;
+    await saveStudySet(studySet, embedding);
 
     console.log(`[Job ${job.id}] ✅ Completed`);
     
@@ -51,9 +53,10 @@ queueEvents.on('completed', ({ jobId }) => {
 
 // --- Public API for Controller ---
 
-export const addJob = async (topic: string): Promise<string> => {
+export const addJob = async (topic: string, embedding?: number[]): Promise<string> => {
   // Add job with retry configuration
-  const job = await flashcardQueue.add('generate-studyset', { topic }, {
+  // We include the embedding in the payload to save it to DB later without re-generating
+  const job = await flashcardQueue.add('generate-studyset', { topic, embedding }, {
     attempts: 3, // Retry 3 times if it fails (e.g., API timeout)
     backoff: {
       type: 'exponential',
