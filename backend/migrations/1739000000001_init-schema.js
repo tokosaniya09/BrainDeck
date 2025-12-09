@@ -7,7 +7,6 @@ exports.up = (pgm) => {
     pgm.createExtension("vector", { ifNotExists: true });
 
     // 2. Create Study Sets Table
-    // Added { ifNotExists: true } to prevent errors if running on a DB where tables were manually created
     pgm.createTable(
         "study_sets",
         {
@@ -45,8 +44,25 @@ exports.up = (pgm) => {
         { ifNotExists: true }
     );
 
-    // 4. Create Index for Vector Search (HNSW)
-    // We use raw SQL here because node-pg-migrate helper for vector indices is specific
+    // 4. Create Quiz Questions Table (Moved here from 001)
+    pgm.createTable(
+        "quiz_questions",
+        {
+            id: { type: "serial", primaryKey: true },
+            set_id: {
+                type: "integer",
+                notNull: true,
+                references: '"study_sets"',
+                onDelete: "CASCADE",
+            },
+            question: { type: "text", notNull: true },
+            choices: { type: "text[]", notNull: true },
+            answer_index: { type: "integer", notNull: true },
+        },
+        { ifNotExists: true }
+    );
+
+    // 5. Create Index for Vector Search (HNSW)
     pgm.sql(`
     CREATE INDEX IF NOT EXISTS study_sets_embedding_idx 
     ON study_sets USING hnsw (embedding vector_cosine_ops);
@@ -54,6 +70,7 @@ exports.up = (pgm) => {
 };
 
 exports.down = (pgm) => {
+    pgm.dropTable("quiz_questions");
     pgm.dropTable("flashcards");
     pgm.dropTable("study_sets");
     pgm.dropExtension("vector");

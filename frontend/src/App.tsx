@@ -48,6 +48,20 @@ const MainApp = () => {
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
+  // Handle browser back button/swipe navigation
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      // If the user swipes back or clicks back, we reset to the home view.
+      // This works because we push a state when a study set is loaded.
+      setStudySet(null);
+      setTopic('');
+      setError(null);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   const loadHistory = async () => {
     try {
       const data = await fetchHistory();
@@ -81,6 +95,9 @@ const MainApp = () => {
         setLoadingStatus(status);
       });
       setStudySet(data);
+      // Push state to history so "Back" works
+      window.history.pushState({ view: 'results' }, '', '#results');
+      
       if (isAuthenticated) {
         loadHistory(); // Refresh history if logged in
       }
@@ -99,6 +116,8 @@ const MainApp = () => {
     try {
       const data = await fetchStudySet(id);
       setStudySet(data);
+      // Push state to history so "Back" works
+      window.history.pushState({ view: 'results' }, '', '#results');
     } catch (err) {
       setError("Could not load this study set.");
     } finally {
@@ -108,10 +127,16 @@ const MainApp = () => {
   };
 
   const resetApp = () => {
-    setTopic('');
-    setStudySet(null);
-    setError(null);
-    if (isAuthenticated) loadHistory();
+    if (studySet) {
+      // If we are currently viewing a set, "Reset" acts like "Back"
+      // This triggers the popstate event listener above which clears the state
+      window.history.back();
+    } else {
+      setTopic('');
+      setStudySet(null);
+      setError(null);
+      if (isAuthenticated) loadHistory();
+    }
   };
 
   const getLoadingMessage = () => {
