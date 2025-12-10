@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'https://braindeck-4bis.onrender.com',
+        target: 'https://braindeck-4bis.onrender.com/api',
         changeOrigin: true,
         secure: false,
       }
