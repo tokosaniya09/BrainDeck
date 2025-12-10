@@ -1,49 +1,63 @@
 import 'dotenv/config'; 
 import express from 'express';
 import cors from 'cors';
-import { addJob, getJobStatus, flashcardQueue } from './services/queue';
+import { z } from 'zod'; 
+import { v4 as uuidv4 } from 'uuid';
+
 import { studySetRepository, initDB } from './db';
-import { generateEmbedding } from './services/ai';
 import authRoutes from './routes/auth';
 import { requireAuth, optionalAuth } from './middleware/auth';
+import { generalLimiter, generationLimiter } from './middleware/rateLimiter';
+import { logger } from './utils/logger';
+
+// Services (DI Injection)
+import { GeminiAIService } from './services/ai';
+import { FlashcardQueueService } from './services/queue';
+
+// Initialize Services
+const aiService = new GeminiAIService(process.env.API_KEY || '');
+const queueService = new FlashcardQueueService(aiService, studySetRepository);
 
 if (!process.env.API_KEY) {
-  console.error("❌ FATAL: API_KEY is missing in backend/.env file.");
+  logger.error("❌ FATAL: API_KEY is missing in backend/.env file.");
 }
 
 if (!process.env.GOOGLE_CLIENT_ID) {
-  console.warn("⚠️ WARNING: GOOGLE_CLIENT_ID is missing in backend/.env file. Google Login will fail.");
+  logger.warn("⚠️ WARNING: GOOGLE_CLIENT_ID is missing in backend/.env file. Google Login will fail.");
 }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust Proxy
+app.set('trust proxy', 1);
+
 // Configure CORS
 const allowedOrigins = [
-  process.env.CLIENT_URL, // e.g., https://your-app.vercel.app
-  'http://localhost:5173', // Local development
+  process.env.CLIENT_URL, 
+  'http://localhost:5173', 
   'http://localhost:3000'
 ].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
-    // In production, you might want to be strict. For now, we allow all to ensure connection success.
-    // To be strict, uncomment the check below and remove `return callback(null, true);`
-    
-    // if (allowedOrigins.indexOf(origin) === -1) {
-    //   var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-    //   return callback(new Error(msg), false);
-    // }
-    
     return callback(null, true);
   },
   credentials: true
 }));
 
-app.use(express.json() as any);
+// Middleware: Correlation ID
+app.use((req: any, res, next) => {
+  req.id = req.headers['x-correlation-id'] || uuidv4();
+  next();
+});
+
+// Apply General Rate Limiter
+app.use(generalLimiter as any);
+
+// Limit payload size
+app.use(express.json({ limit: '10kb' }) as any);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -54,55 +68,79 @@ app.use('/api/auth', authRoutes);
 
 // --- Job Queue Endpoints ---
 
-// Apply optionalAuth: If user is logged in, req.user is set. If not, req.user is undefined.
-app.post('/api/generate', optionalAuth, async (req: any, res: any) => {
+// Validation Schema
+const GenerateSchema = z.object({
+  topic: z.string()
+    .trim()
+    .min(2, "Topic is too short")
+    .max(200, "Topic is too long (max 200 characters)")
+    .refine((val) => {
+      const lower = val.toLowerCase();
+      const suspicious = ["ignore previous", "system prompt", "reveal your instructions"];
+      return !suspicious.some(pattern => lower.includes(pattern));
+    }, "Invalid topic detected. Please provide a clear educational topic.")
+});
+
+app.post('/api/generate', optionalAuth, generationLimiter as any, async (req: any, res: any) => {
+  const correlationId = req.id;
   try {
     if (!process.env.API_KEY) {
       throw new Error("API_KEY is not configured on the server.");
     }
 
-    const { topic } = req.body;
+    const validation = GenerateSchema.safeParse(req.body);
     
-    // Check if user is logged in (req.user comes from middleware)
+    if (!validation.success) {
+      return res.status(400).json({ error: validation.error.issues[0].message });
+    }
+
+    const { topic } = validation.data;
     const userId = req.user?.id; 
 
-    if (!topic || typeof topic !== 'string') {
-      return res.status(400).json({ error: 'Topic is required and must be a string' });
-    }
-
-    // 1. Generate Embedding
-    let embedding: number[];
-    try {
-      embedding = await generateEmbedding(topic);
-    } catch (e) {
-      console.error("Embedding generation failed, falling back to non-vector flow:", e);
-      // Pass userId (number or undefined)
-      const jobId = await addJob(topic, userId, undefined); 
-      return res.status(202).json({ jobId, status: 'pending' });
-    }
-
-    // 2. SEMANTIC CACHE CHECK via Repository
-    const existingSet: any = await studySetRepository.findBySemantics(embedding, 0.25);
-    
-    if (existingSet) {
-       // IMPORTANT: Cache Hit!
-       // ONLY record activity if user is logged in
-       if (existingSet.id && userId) {
-         await studySetRepository.recordActivity(userId, existingSet.id);
+    // 1. LAYER 1 CACHE: Exact String Match
+    const exactMatch: any = await studySetRepository.findByExactTopic(topic);
+    if (exactMatch) {
+       if (exactMatch.id && userId) {
+         await studySetRepository.recordActivity(userId, exactMatch.id);
        }
-
+       logger.info('Serving from Exact Cache', { topic, correlationId });
        return res.status(200).json({
          status: 'completed',
-         message: 'Retrieved from semantic cache',
-         result: existingSet
+         message: 'Retrieved from exact cache',
+         result: exactMatch
        });
     }
 
-    // 3. Cache Miss: Add to Queue
-    // We pass userId (number or undefined) to the job
-    const jobId = await addJob(topic, userId, embedding);
+    // 2. Generate Embedding
+    let embedding: number[];
+    try {
+      embedding = await aiService.generateEmbedding(topic);
+    } catch (e: any) {
+      logger.error("Embedding generation failed", { error: e.message, correlationId });
+      // Fallback: Add job without embedding
+      const jobId = await queueService.addJob(topic, userId, undefined, correlationId); 
+      return res.status(202).json({ jobId, status: 'pending' });
+    }
+
+    // 3. LAYER 2 CACHE: Semantic Search
+    const semanticMatch: any = await studySetRepository.findBySemantics(embedding, 0.25);
     
-    console.log(`Job accepted: ${jobId} for topic: ${topic} (User: ${userId || 'Guest'})`);
+    if (semanticMatch) {
+       if (semanticMatch.id && userId) {
+         await studySetRepository.recordActivity(userId, semanticMatch.id);
+       }
+       logger.info('Serving from Semantic Cache', { topic, correlationId });
+       return res.status(200).json({
+         status: 'completed',
+         message: 'Retrieved from semantic cache',
+         result: semanticMatch
+       });
+    }
+
+    // 4. Cache Miss: Add to Job Queue
+    const jobId = await queueService.addJob(topic, userId, embedding, correlationId);
+    
+    logger.info(`Job Accepted`, { jobId, topic, userId, correlationId });
 
     res.status(202).json({ 
       jobId, 
@@ -111,7 +149,7 @@ app.post('/api/generate', optionalAuth, async (req: any, res: any) => {
     });
 
   } catch (error: any) {
-    console.error('Submission error:', error);
+    logger.error('Submission error', { error: error.message, correlationId });
     res.status(500).json({ 
       error: 'Failed to submit job',
       details: error.message 
@@ -122,7 +160,7 @@ app.post('/api/generate', optionalAuth, async (req: any, res: any) => {
 app.get('/api/jobs/:id', async (req: any, res: any) => {
   try {
     const { id } = req.params;
-    const job = await getJobStatus(id);
+    const job = await queueService.getJobStatus(id);
 
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
@@ -130,30 +168,27 @@ app.get('/api/jobs/:id', async (req: any, res: any) => {
 
     res.json(job);
   } catch (error: any) {
-    console.error('Polling error:', error);
+    logger.error('Polling error', { error: error.message, correlationId: req.id });
     res.status(500).json({ error: 'Internal server error during polling' });
   }
 });
 
 app.get('/api/queue-status', async (req: any, res: any) => {
   try {
-    const counts = await flashcardQueue.getJobCounts('active', 'completed', 'failed', 'waiting');
+    const counts = await queueService.getQueueCounts();
     res.json(counts);
   } catch (error) {
     res.status(500).json({ error: 'Could not fetch queue status' });
   }
 });
 
-// --- Persistent Data Endpoints ---
-
-// Require Auth: Only logged in users have history
 app.get('/api/history', requireAuth, async (req: any, res: any) => {
   try {
-    const userId = req.user!.id; // Guaranteed by requireAuth
+    const userId = req.user!.id;
     const sets = await studySetRepository.getUserHistory(userId, 10);
     res.json(sets);
   } catch (error) {
-    console.error("History fetch error:", error);
+    logger.error("History fetch error", { error, correlationId: req.id });
     res.status(500).json({ error: 'Failed to fetch history' });
   }
 });
@@ -166,7 +201,6 @@ app.get('/api/sets/:id', optionalAuth, async (req: any, res: any) => {
     const set = await studySetRepository.getById(id);
     if (!set) return res.status(404).json({ error: "Study set not found" });
 
-    // Only update accessed_at if user is logged in
     if (userId) {
       await studySetRepository.recordActivity(userId, id);
     }
@@ -180,10 +214,10 @@ app.get('/api/sets/:id', optionalAuth, async (req: any, res: any) => {
 initDB()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`Backend server running on http://localhost:${PORT}`);
+      logger.info(`Backend server running on http://localhost:${PORT}`);
     });
   })
   .catch((err) => {
-    console.error("❌ Failed to start server:", err);
+    logger.error("❌ Failed to start server", { error: err });
     process.exit(1);
   });

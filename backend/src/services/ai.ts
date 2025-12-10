@@ -2,33 +2,9 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { z } from "zod";
 import { PROMPTS } from "../config/prompts";
 import { aiCircuitBreaker } from "../utils/circuitBreaker";
-
-// Fix: Use Gemini API initialized with process.env.API_KEY
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-// --- Types & Interfaces ---
-
-export interface Flashcard {
-  id: string;
-  front: string;
-  back: string;
-  difficulty: 'easy' | 'medium' | 'hard';
-  tags: string[];
-}
-
-export interface QuizQuestion {
-  question: string;
-  choices: string[];
-  answer_index: number;
-}
-
-export interface StudySet {
-  topic: string;
-  summary: string;
-  estimated_study_time_minutes: number;
-  flashcards: Flashcard[];
-  example_quiz_questions: QuizQuestion[];
-}
+import { IAIService } from "../interfaces/IAIService";
+import { StudySet } from "../types";
+import { logger } from "../utils/logger";
 
 // --- Zod Schemas for Runtime Validation ---
 
@@ -94,93 +70,94 @@ const geminiStudySetSchema = {
   required: ["topic", "summary", "estimated_study_time_minutes", "flashcards", "example_quiz_questions"]
 };
 
-// --- Helper Functions ---
+// --- Service Implementation ---
 
-const cleanJson = (text: string): string => {
-  // Removes markdown code blocks (```json ... ```) if present
-  return text.replace(/```json\n?|```/g, '').trim();
-};
+export class GeminiAIService implements IAIService {
+  private ai: GoogleGenAI;
 
-export const generateEmbedding = async (text: string): Promise<number[]> => {
-  return aiCircuitBreaker.execute(async () => {
-    const response = await ai.models.embedContent({
-      model: "text-embedding-004",
-      contents: { parts: [{ text }] }
-    });
-    
-    if (!response.embeddings?.[0]?.values) {
-      throw new Error("Failed to generate embedding");
-    }
-    return response.embeddings[0].values;
-  });
-};
+  constructor(apiKey: string) {
+    this.ai = new GoogleGenAI({ apiKey });
+  }
 
-export const generateFlashcards = async (topic: string): Promise<StudySet> => {
-  // Wrap the entire operation in a Circuit Breaker
-  return aiCircuitBreaker.execute(async () => {
-    let currentPrompt = PROMPTS.generateStudySet(topic);
-    let attempts = 0;
-    const MAX_RETRIES = 2;
+  private cleanJson(text: string): string {
+    return text.replace(/```json\n?|```/g, '').trim();
+  }
 
-    while (attempts <= MAX_RETRIES) {
-      try {
-        console.log(`🤖 AI Generation Attempt ${attempts + 1}/${MAX_RETRIES + 1} for "${topic}"`);
-
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: currentPrompt,
-          config: {
-            systemInstruction: "You are a concise, accurate educational assistant.",
-            responseMimeType: "application/json",
-            responseSchema: geminiStudySetSchema,
-            temperature: 0.2 + (attempts * 0.1), // Slightly increase temp on retries
-          }
-        });
-
-        const text = response.text;
-        
-        if (!text) {
-          throw new Error("Empty response from Gemini");
-        }
-
-        // 1. Parse JSON (Basic Syntax Check)
-        let rawData;
-        try {
-          rawData = JSON.parse(cleanJson(text));
-        } catch (e) {
-          throw new Error("Invalid JSON syntax received from model");
-        }
-
-        // 2. Validate Structure (Zod Schema Check)
-        const validationResult = StudySetSchema.safeParse(rawData);
-
-        if (!validationResult.success) {
-          // Use .issues instead of .errors to satisfy Zod typing
-          const errorMsg = validationResult.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
-          throw new Error(`Schema Validation Failed: ${errorMsg}`);
-        }
-
-        // 3. Success! Return data
-        return validationResult.data as StudySet;
-
-      } catch (error: any) {
-        attempts++;
-        console.warn(`⚠️ Attempt ${attempts} failed: ${error.message}`);
-        
-        if (attempts > MAX_RETRIES) {
-           throw error; // Let the queue worker handle the final failure
-        }
-
-        // Auto-healing: Feed the error back to the model
-        currentPrompt = `${PROMPTS.generateStudySet(topic)}
-        
-        IMPORTANT: Your previous attempt failed. 
-        Error details: ${error.message}
-        
-        Please correct the JSON output. Ensure strict adherence to the schema.`;
+  async generateEmbedding(text: string): Promise<number[]> {
+    return aiCircuitBreaker.execute(async () => {
+      const response = await this.ai.models.embedContent({
+        model: "text-embedding-004",
+        contents: { parts: [{ text }] }
+      });
+      
+      if (!response.embeddings?.[0]?.values) {
+        throw new Error("Failed to generate embedding");
       }
-    }
+      return response.embeddings[0].values;
+    });
+  }
 
-    throw new Error("Unexpected end of retry loop");
-  });
-};
+  async generateFlashcards(topic: string, correlationId?: string): Promise<StudySet> {
+    return aiCircuitBreaker.execute(async () => {
+      let currentPrompt = PROMPTS.generateStudySet(topic);
+      let attempts = 0;
+      const MAX_RETRIES = 2;
+
+      while (attempts <= MAX_RETRIES) {
+        try {
+          logger.info(`🤖 AI Generation Attempt ${attempts + 1}/${MAX_RETRIES + 1}`, { topic, correlationId });
+
+          const response = await this.ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: currentPrompt,
+            config: {
+              systemInstruction: "You are a concise, accurate educational assistant.",
+              responseMimeType: "application/json",
+              responseSchema: geminiStudySetSchema,
+              temperature: 0.2 + (attempts * 0.1),
+            }
+          });
+
+          const text = response.text;
+          
+          if (!text) {
+            throw new Error("Empty response from Gemini");
+          }
+
+          let rawData;
+          try {
+            rawData = JSON.parse(this.cleanJson(text));
+          } catch (e) {
+            throw new Error("Invalid JSON syntax received from model");
+          }
+
+          const validationResult = StudySetSchema.safeParse(rawData);
+
+          if (!validationResult.success) {
+            const errorMsg = validationResult.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+            throw new Error(`Schema Validation Failed: ${errorMsg}`);
+          }
+
+          return validationResult.data as StudySet;
+
+        } catch (error: any) {
+          attempts++;
+          logger.warn(`⚠️ Attempt ${attempts} failed`, { error: error.message, correlationId });
+          
+          if (attempts > MAX_RETRIES) {
+             throw error; 
+          }
+
+          currentPrompt = `${PROMPTS.generateStudySet(topic)}
+          
+          IMPORTANT: Your previous attempt failed. 
+          Error details: ${error.message}
+          
+          Please correct the JSON output. Ensure strict adherence to the schema.`;
+        }
+      }
+
+      throw new Error("Unexpected end of retry loop");
+    });
+  }
+}

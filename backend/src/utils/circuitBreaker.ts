@@ -1,3 +1,5 @@
+import { logger } from "./logger";
+
 enum State {
   Closed,   // Normal operation
   Open,     // Failing, reject requests immediately
@@ -16,7 +18,7 @@ export class CircuitBreaker {
   async execute<T>(fn: () => Promise<T>): Promise<T> {
     if (this.state === State.Open) {
       if (Date.now() - this.lastFailureTime > this.cooldownPeriod) {
-        console.log("CircuitBreaker: Cooldown passed, entering HALF-OPEN state.");
+        logger.info("CircuitBreaker: Cooldown passed, entering HALF-OPEN state.");
         this.state = State.HalfOpen;
       } else {
         throw new Error("CircuitBreaker: Service unavailable (Open state). Please try again later.");
@@ -39,18 +41,18 @@ export class CircuitBreaker {
   private recordFailure() {
     this.failures++;
     this.lastFailureTime = Date.now();
-    console.warn(`CircuitBreaker: Failure recorded (${this.failures}/${this.failureThreshold})`);
+    logger.warn(`CircuitBreaker: Failure recorded`, { failures: this.failures, threshold: this.failureThreshold });
     
     if (this.failures >= this.failureThreshold) {
       this.state = State.Open;
-      console.error("CircuitBreaker: Threshold reached. State changed to OPEN.");
+      logger.error("CircuitBreaker: Threshold reached. State changed to OPEN.");
     }
   }
 
   private reset() {
     this.failures = 0;
     this.state = State.Closed;
-    console.log("CircuitBreaker: Recovered. State changed to CLOSED.");
+    logger.info("CircuitBreaker: Recovered. State changed to CLOSED.");
   }
 }
 

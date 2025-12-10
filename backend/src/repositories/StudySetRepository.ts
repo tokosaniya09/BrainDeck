@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
-import { StudySet, Flashcard, QuizQuestion } from '../services/ai';
+import { StudySet, Flashcard, QuizQuestion } from '../types';
+import { logger } from '../utils/logger';
 
 export interface IStudySetRepository {
   createStudySet(data: StudySet, embedding?: number[]): Promise<number>;
@@ -7,6 +8,7 @@ export interface IStudySetRepository {
   getById(id: number): Promise<StudySet | null>;
   getUserHistory(userId: number, limit: number): Promise<any[]>;
   findBySemantics(embedding: number[], threshold: number): Promise<StudySet | null>;
+  findByExactTopic(topic: string): Promise<StudySet | null>;
 }
 
 export class PostgresStudySetRepository implements IStudySetRepository {
@@ -55,14 +57,13 @@ export class PostgresStudySetRepository implements IStudySetRepository {
 
     } catch (error) {
       await client.query('ROLLBACK');
-      console.error("Repository: Transaction failed", error);
+      logger.error("Repository: Transaction failed", { error });
       throw error;
     } finally {
       client.release();
     }
   }
 
-  // Changed userId to number
   async recordActivity(userId: number, studySetId: number): Promise<void> {
     try {
       await this.pool.query(
@@ -73,7 +74,7 @@ export class PostgresStudySetRepository implements IStudySetRepository {
         [userId, studySetId]
       );
     } catch (error) {
-      console.error("Repository: Failed to record user activity", error);
+      logger.error("Repository: Failed to record user activity", { error, userId, studySetId });
     }
   }
 
@@ -112,7 +113,6 @@ export class PostgresStudySetRepository implements IStudySetRepository {
     }
   }
 
-  // Changed userId to number
   async getUserHistory(userId: number, limit: number = 10): Promise<any[]> {
     try {
       const res = await this.pool.query(
@@ -126,7 +126,7 @@ export class PostgresStudySetRepository implements IStudySetRepository {
       );
       return res.rows;
     } catch (error) {
-      console.error("Repository: Failed to fetch user history", error);
+      logger.error("Repository: Failed to fetch user history", { error, userId });
       return [];
     }
   }
@@ -146,7 +146,7 @@ export class PostgresStudySetRepository implements IStudySetRepository {
       if (res.rows.length > 0) {
         const bestMatch = res.rows[0];
         if (bestMatch.distance < threshold) {
-           console.log(`⚡ Repository: Cache Hit! "${bestMatch.topic}" (Dist: ${bestMatch.distance.toFixed(4)})`);
+           logger.info(`⚡ Repository: Semantic Cache Hit!`, { topic: bestMatch.topic, distance: bestMatch.distance });
            const fullSet = await this.getById(bestMatch.id);
            if (fullSet) {
              return { ...fullSet, id: bestMatch.id } as any; 
@@ -155,7 +155,29 @@ export class PostgresStudySetRepository implements IStudySetRepository {
       }
       return null;
     } catch (error) {
-      console.error("Repository: Semantic search error", error);
+      logger.error("Repository: Semantic search error", { error });
+      return null;
+    }
+  }
+
+  async findByExactTopic(topic: string): Promise<StudySet | null> {
+    try {
+      // Case-insensitive exact match
+      const res = await this.pool.query(
+        'SELECT id FROM study_sets WHERE LOWER(topic) = LOWER($1) LIMIT 1',
+        [topic]
+      );
+      
+      if (res.rows.length > 0) {
+        logger.info(`⚡ Repository: Exact Cache Hit`, { topic });
+        const fullSet = await this.getById(res.rows[0].id);
+        if (fullSet) {
+           return { ...fullSet, id: res.rows[0].id } as any;
+        }
+      }
+      return null;
+    } catch (error) {
+      logger.error("Repository: Exact match search error", { error });
       return null;
     }
   }

@@ -3,8 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.initDB = exports.studySetRepository = exports.pool = void 0;
 const pg_1 = require("pg");
 const StudySetRepository_1 = require("../repositories/StudySetRepository");
+const logger_1 = require("../utils/logger");
 if (!process.env.DATABASE_URL) {
-    console.error("❌ DATABASE_URL missing in environment variables.");
+    logger_1.logger.error("❌ DATABASE_URL missing in environment variables.");
 }
 // 1. Singleton Pool
 exports.pool = new pg_1.Pool({
@@ -18,12 +19,12 @@ const initDB = async () => {
     while (retries > 0) {
         try {
             const client = await exports.pool.connect();
-            console.log("✅ Database connected successfully.");
+            logger_1.logger.info("✅ Database connected successfully.");
             client.release();
             return;
         }
         catch (error) {
-            console.log(`⚠️ Database unreachable. Retrying in 2s... (${retries} attempts). Error: ${error.message}`);
+            logger_1.logger.warn(`⚠️ Database unreachable. Retrying in 2s... (${retries} attempts).`, { error: error.message });
             retries--;
             await new Promise(res => setTimeout(res, 2000));
         }

@@ -1,8 +1,9 @@
 import { Pool } from 'pg';
 import { PostgresStudySetRepository } from '../repositories/StudySetRepository';
+import { logger } from '../utils/logger';
 
 if (!process.env.DATABASE_URL) {
-  console.error("❌ DATABASE_URL missing in environment variables.");
+  logger.error("❌ DATABASE_URL missing in environment variables.");
 }
 
 // 1. Singleton Pool
@@ -19,11 +20,11 @@ export const initDB = async () => {
   while (retries > 0) {
     try {
       const client = await pool.connect();
-      console.log("✅ Database connected successfully.");
+      logger.info("✅ Database connected successfully.");
       client.release();
       return;
     } catch (error: any) {
-      console.log(`⚠️ Database unreachable. Retrying in 2s... (${retries} attempts). Error: ${error.message}`);
+      logger.warn(`⚠️ Database unreachable. Retrying in 2s... (${retries} attempts).`, { error: error.message });
       retries--;
       await new Promise(res => setTimeout(res, 2000));
     }
