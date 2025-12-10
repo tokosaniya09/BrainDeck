@@ -1,29 +1,77 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Sparkles, Loader2, ChevronRight, History } from 'lucide-react';
-import { HistoryItem } from '../api/client';
+import { useNavigate } from 'react-router-dom';
+import { fetchHistory, generateStudySet, HistoryItem } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import LoadingView from '../components/LoadingView';
 
 interface HomePageProps {
-  topic: string;
-  setTopic: (t: string) => void;
-  isLoading: boolean;
-  onGenerate: (e: React.FormEvent) => void;
-  history: HistoryItem[];
-  onLoadHistoryItem: (id: number) => void;
-  error: string | null;
-  isAuthenticated: boolean;
+  onOpenAuth: () => void;
 }
 
-const HomePage: React.FC<HomePageProps> = ({
-  topic,
-  setTopic,
-  isLoading,
-  onGenerate,
-  history,
-  onLoadHistoryItem,
-  error,
-  isAuthenticated
-}) => {
+const HomePage: React.FC<HomePageProps> = ({ onOpenAuth }) => {
+  const [topic, setTopic] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  
+  const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadHistory();
+    } else {
+      setHistory([]);
+    }
+  }, [isAuthenticated]);
+
+  const loadHistory = async () => {
+    try {
+      const data = await fetchHistory();
+      setHistory(data);
+    } catch (e) {
+      console.error("Failed to load history", e);
+    }
+  };
+
+  const handleGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!topic.trim()) return;
+
+    setIsLoading(true);
+    setLoadingStatus('initiating');
+    setError(null);
+
+    try {
+      const data = await generateStudySet(topic, (status) => {
+        setLoadingStatus(status);
+      });
+      
+      // Navigate to the result page. 
+      // If the backend returns an ID, we use it in the URL.
+      // We also pass the data in state to avoid re-fetching immediately.
+      if (data.id) {
+        navigate(`/set/${data.id}`, { state: { studySet: data } });
+      } else {
+        // Fallback if no ID is present (rare/error case)
+        setError("Generated set is missing an ID.");
+      }
+      
+    } catch (err: any) {
+      setError(err.message || "Failed to generate content. Please try again.");
+    } finally {
+      setIsLoading(false);
+      setLoadingStatus('');
+    }
+  };
+
+  if (isLoading) {
+    return <LoadingView status={loadingStatus} />;
+  }
+
   return (
     <motion.div 
       key="hero"
@@ -44,13 +92,16 @@ const HomePage: React.FC<HomePageProps> = ({
       </h1>
       
       {!isAuthenticated && (
-          <p className="text-sm text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 inline-block px-4 py-1.5 rounded-full mb-8 border border-amber-200/60 dark:border-amber-800/60 font-medium">
+          <p 
+            onClick={onOpenAuth}
+            className="text-sm cursor-pointer hover:underline text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 inline-block px-4 py-1.5 rounded-full mb-8 border border-amber-200/60 dark:border-amber-800/60 font-medium"
+          >
             ✨ Log in to save your study sets and track progress.
           </p>
       )}
 
-      <form onSubmit={onGenerate} className="relative max-w-lg mx-auto mb-16 group">
-        <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-700 to-violet-700 rounded-2xl opacity-20 group-hover:opacity-40 transition duration-300 blur"></div>
+      <form onSubmit={handleGenerate} className="relative max-w-lg mx-auto mb-16 group">
+        <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-violet-500 rounded-2xl opacity-20 group-hover:opacity-40 transition duration-300 blur"></div>
         <div className="relative">
           <input
             type="text"
@@ -80,7 +131,7 @@ const HomePage: React.FC<HomePageProps> = ({
             {history.map((item) => (
               <div 
                 key={item.id}
-                onClick={() => onLoadHistoryItem(item.id)}
+                onClick={() => navigate(`/set/${item.id}`)}
                 className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group flex items-center justify-between"
               >
                   <div>

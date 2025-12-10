@@ -13,6 +13,7 @@ export interface QuizQuestion {
 }
 
 export interface StudySet {
+  id?: number;
   topic: string;
   summary: string;
   estimated_study_time_minutes: number;

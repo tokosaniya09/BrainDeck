@@ -1,19 +1,28 @@
 import React from 'react';
 import { BrainCircuit, RotateCcw, Database, LogOut, LogIn, Moon, Sun } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { StudySet } from '../types';
+import { getAvatarUrl } from '../utils/avatarUtils';
 
 interface HeaderProps {
   queueStats: any;
-  studySet: StudySet | null;
   onReset: () => void;
   onOpenAuth: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ queueStats, studySet, onReset, onOpenAuth }) => {
+const Header: React.FC<HeaderProps> = ({ queueStats, onReset, onOpenAuth }) => {
   const { user, isAuthenticated, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
+
+  const isStudySetPage = location.pathname.startsWith('/set/');
 
   return (
     <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50 transition-colors duration-300">
@@ -45,7 +54,7 @@ const Header: React.FC<HeaderProps> = ({ queueStats, studySet, onReset, onOpenAu
              {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
            </button>
 
-           {studySet && (
+           {isStudySetPage && (
              <button 
                onClick={onReset}
                className="hidden sm:flex text-sm font-medium text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors items-center gap-1"
@@ -57,9 +66,11 @@ const Header: React.FC<HeaderProps> = ({ queueStats, studySet, onReset, onOpenAu
            {isAuthenticated ? (
              <div className="flex items-center gap-3 pl-3 border-l border-slate-200 dark:border-slate-700">
                <div className="flex items-center gap-3">
-                 <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center text-indigo-700 dark:text-indigo-300 font-bold text-sm shadow-sm">
-                   {user?.name ? user.name.charAt(0).toUpperCase() : (user?.email?.charAt(0).toUpperCase() || 'U')}
-                 </div>
+                 <img 
+                   src={getAvatarUrl(user?.email || user?.name || 'user')} 
+                   alt="Profile" 
+                   className="w-8 h-8 rounded-full border border-indigo-200 dark:border-indigo-800 shadow-sm object-cover bg-indigo-50 dark:bg-indigo-900"
+                 />
                  <div className="text-right hidden sm:block">
                    <p className="text-xs font-bold text-slate-900 dark:text-slate-200">{user?.name || 'User'}</p>
                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Free Plan</p>
@@ -67,7 +78,7 @@ const Header: React.FC<HeaderProps> = ({ queueStats, studySet, onReset, onOpenAu
                </div>
                
                <button 
-                 onClick={logout}
+                 onClick={handleLogout}
                  className="p-2 text-slate-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors ml-1"
                  title="Logout"
                >

@@ -40,7 +40,8 @@ export class FlashcardQueueService {
 
         logger.info(`[Job ${job.id}] ✅ Completed`, { newSetId, userId, correlationId });
         
-        return studySet;
+        // Return the study set WITH the new database ID attached
+        return { ...studySet, id: newSetId };
 
       } catch (error) {
         logger.error(`[Job ${job.id}] ❌ Failed`, { error, correlationId });

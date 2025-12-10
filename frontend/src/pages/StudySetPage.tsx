@@ -1,16 +1,66 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Clock, BookOpen, LayoutGrid, ListChecks } from 'lucide-react';
+import { Clock, BookOpen, LayoutGrid, ListChecks, ArrowLeft, AlertCircle } from 'lucide-react';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { StudySet } from '../types';
+import { fetchStudySet } from '../api/client';
 import Flashcard from '../components/Flashcard';
 import Quiz from '../components/Quiz';
+import LoadingView from '../components/LoadingView';
 
-interface StudySetPageProps {
-  studySet: StudySet;
-}
-
-const StudySetPage: React.FC<StudySetPageProps> = ({ studySet }) => {
+const StudySetPage: React.FC = () => {
+  const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
+  
+  // Try to get data from navigation state first
+  const [studySet, setStudySet] = useState<StudySet | null>(location.state?.studySet || null);
+  const [loading, setLoading] = useState(!studySet);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'cards' | 'quiz'>('cards');
+
+  useEffect(() => {
+    // If we already have data from state, don't fetch
+    if (studySet) return;
+    
+    // Otherwise, fetch by ID
+    const loadData = async () => {
+      if (!id) return;
+      
+      setLoading(true);
+      try {
+        const data = await fetchStudySet(parseInt(id));
+        setStudySet(data);
+      } catch (err: any) {
+        setError(err.message || "Failed to load study set");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [id, studySet]);
+
+  if (loading) {
+    return <LoadingView status="loading_history" />;
+  }
+
+  if (error || !studySet) {
+    return (
+      <div className="text-center mt-20">
+        <div className="inline-flex p-4 bg-red-50 dark:bg-red-900/20 rounded-full mb-4">
+            <AlertCircle className="w-8 h-8 text-red-500" />
+        </div>
+        <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">{error || "Study set not found"}</h3>
+        <button 
+          onClick={() => navigate('/')}
+          className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline"
+        >
+          Go back home
+        </button>
+      </div>
+    );
+  }
 
   return (
     <motion.div 
@@ -19,6 +69,13 @@ const StudySetPage: React.FC<StudySetPageProps> = ({ studySet }) => {
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5 }}
     >
+      <button 
+        onClick={() => navigate('/')}
+        className="flex items-center text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 mb-6 transition-colors font-medium text-sm"
+      >
+        <ArrowLeft className="w-4 h-4 mr-1" /> Back to Home
+      </button>
+
       {/* Summary Section */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-8 mb-8 shadow-sm relative overflow-hidden transition-colors">
         <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-50 dark:bg-indigo-900/20 rounded-full blur-3xl -mr-32 -mt-32 opacity-50"></div>
