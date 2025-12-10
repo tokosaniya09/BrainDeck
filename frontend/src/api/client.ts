@@ -18,6 +18,11 @@ export interface HistoryItem {
 const POLL_INTERVAL_MS = 2000;
 const MAX_ATTEMPTS = 60;
 
+// Get the API Base URL from environment variables
+// In local dev, this is usually empty (uses proxy).
+// In production, this should be 'https://your-backend.onrender.com'
+const API_BASE_URL = (import.meta as any).env.VITE_API_URL || '';
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- Auth Headers ---
@@ -34,7 +39,7 @@ const getHeaders = () => {
 
 // --- Auth API Calls ---
 export const loginUser = async (email: string, password: string): Promise<{ token: string, user: any }> => {
-  const res = await fetch('/api/auth/login', {
+  const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password })
@@ -47,7 +52,7 @@ export const loginUser = async (email: string, password: string): Promise<{ toke
 };
 
 export const signupUser = async (email: string, password: string, name: string): Promise<{ token: string, user: any }> => {
-  const res = await fetch('/api/auth/signup', {
+  const res = await fetch(`${API_BASE_URL}/api/auth/signup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password, name })
@@ -60,7 +65,7 @@ export const signupUser = async (email: string, password: string, name: string):
 };
 
 export const loginWithGoogle = async (credential: string): Promise<{ token: string, user: any }> => {
-  const res = await fetch('/api/auth/google', {
+  const res = await fetch(`${API_BASE_URL}/api/auth/google`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ credential })
@@ -80,7 +85,7 @@ export const generateStudySet = async (
 ): Promise<StudySet> => {
   if (onStatusUpdate) onStatusUpdate('initiating');
   
-  const startResponse = await fetch('/api/generate', {
+  const startResponse = await fetch(`${API_BASE_URL}/api/generate`, {
     method: 'POST',
     headers: getHeaders(),
     body: JSON.stringify({ topic }),
@@ -109,7 +114,7 @@ export const generateStudySet = async (
     attempts++;
     
     try {
-      const statusResponse = await fetch(`/api/jobs/${jobId}`, {
+      const statusResponse = await fetch(`${API_BASE_URL}/api/jobs/${jobId}`, {
         headers: getHeaders()
       });
       
@@ -145,7 +150,7 @@ export const generateStudySet = async (
 };
 
 export const fetchHistory = async (): Promise<HistoryItem[]> => {
-  const res = await fetch('/api/history', {
+  const res = await fetch(`${API_BASE_URL}/api/history`, {
     headers: getHeaders()
   });
   if (res.status === 401) return []; // Not logged in
@@ -154,7 +159,7 @@ export const fetchHistory = async (): Promise<HistoryItem[]> => {
 };
 
 export const fetchStudySet = async (id: number): Promise<StudySet> => {
-  const res = await fetch(`/api/sets/${id}`, {
+  const res = await fetch(`${API_BASE_URL}/api/sets/${id}`, {
     headers: getHeaders()
   });
   if (!res.ok) throw new Error("Failed to fetch study set");
@@ -162,7 +167,7 @@ export const fetchStudySet = async (id: number): Promise<StudySet> => {
 };
 
 export const fetchQueueStatus = async () => {
-  const res = await fetch('/api/queue-status');
+  const res = await fetch(`${API_BASE_URL}/api/queue-status`);
   if (!res.ok) return null;
   return res.json();
 };

@@ -18,7 +18,31 @@ if (!process.env.GOOGLE_CLIENT_ID) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// Configure CORS
+const allowedOrigins = [
+  process.env.CLIENT_URL, // e.g., https://your-app.vercel.app
+  'http://localhost:5173', // Local development
+  'http://localhost:3000'
+].filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // In production, you might want to be strict. For now, we allow all to ensure connection success.
+    // To be strict, uncomment the check below and remove `return callback(null, true);`
+    
+    // if (allowedOrigins.indexOf(origin) === -1) {
+    //   var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+    //   return callback(new Error(msg), false);
+    // }
+    
+    return callback(null, true);
+  },
+  credentials: true
+}));
+
 app.use(express.json() as any);
 
 app.get('/health', (req, res) => {

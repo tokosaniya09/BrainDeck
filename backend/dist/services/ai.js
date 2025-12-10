@@ -96,6 +96,7 @@ const generateFlashcards = async (topic) => {
                     model: "gemini-2.5-flash",
                     contents: currentPrompt,
                     config: {
+                        systemInstruction: "You are a concise, accurate educational assistant.",
                         responseMimeType: "application/json",
                         responseSchema: geminiStudySetSchema,
                         temperature: 0.2 + (attempts * 0.1), // Slightly increase temp on retries
