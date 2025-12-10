@@ -4,6 +4,7 @@ import { AnimatePresence } from 'framer-motion';
 import { generateStudySet, fetchHistory, fetchStudySet, fetchQueueStatus, HistoryItem } from './api/client';
 import { StudySet } from './types';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 import AuthModal from './components/AuthModal';
 import Header from './components/Header';
@@ -121,7 +122,7 @@ const MainApp = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 transition-colors duration-300">
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
 
       <Header 
@@ -163,9 +164,11 @@ const MainApp = () => {
 
 function App() {
   return (
-    <AuthProvider>
-      <MainApp />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <MainApp />
+      </AuthProvider>
+    </ThemeProvider>
   );
 }
 

@@ -27,9 +27,9 @@ const LoadingView: React.FC<LoadingViewProps> = ({ status }) => {
     >
       <div className="relative">
         <div className="absolute inset-0 bg-indigo-500 blur-xl opacity-20 animate-pulse rounded-full"></div>
-        <Loader2 className="relative w-12 h-12 text-indigo-600 animate-spin mb-4" />
+        <Loader2 className="relative w-12 h-12 text-indigo-600 dark:text-indigo-400 animate-spin mb-4" />
       </div>
-      <p className="text-lg font-medium text-slate-600">{getLoadingMessage()}</p>
+      <p className="text-lg font-medium text-slate-600 dark:text-slate-300">{getLoadingMessage()}</p>
     </motion.div>
   );
 };

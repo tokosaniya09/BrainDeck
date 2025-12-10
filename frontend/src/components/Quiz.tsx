@@ -46,15 +46,15 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
 
   if (showResults) {
     return (
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center max-w-md mx-auto">
-        <div className="mb-4 flex justify-center text-indigo-600">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 p-8 text-center max-w-md mx-auto transition-colors">
+        <div className="mb-4 flex justify-center text-indigo-600 dark:text-indigo-400">
            <CheckCircle2 className="w-16 h-16" />
         </div>
-        <h3 className="text-2xl font-bold text-slate-800 mb-2">Quiz Completed!</h3>
-        <p className="text-slate-600 mb-6">You scored <span className="font-bold text-indigo-600">{score}</span> out of <span className="font-bold">{questions.length}</span></p>
+        <h3 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">Quiz Completed!</h3>
+        <p className="text-slate-600 dark:text-slate-400 mb-6">You scored <span className="font-bold text-indigo-600 dark:text-indigo-400">{score}</span> out of <span className="font-bold">{questions.length}</span></p>
         <button 
           onClick={resetQuiz}
-          className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+          className="px-6 py-2 bg-indigo-600 dark:bg-indigo-500 text-white rounded-lg hover:bg-indigo-700 dark:hover:bg-indigo-600 transition-colors font-medium"
         >
           Try Again
         </button>
@@ -65,17 +65,17 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
   return (
     <div className="max-w-xl mx-auto">
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-          <HelpCircle className="w-5 h-5 text-indigo-500" />
+        <h3 className="text-lg font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+          <HelpCircle className="w-5 h-5 text-indigo-500 dark:text-indigo-400" />
           Quiz Check
         </h3>
-        <span className="text-sm font-medium text-slate-500">
+        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">
           Question {currentQuestionIndex + 1} of {questions.length}
         </span>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <p className="text-lg text-slate-800 font-medium mb-6">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 p-6 transition-colors">
+        <p className="text-lg text-slate-800 dark:text-slate-100 font-medium mb-6">
           {currentQuestion.question}
         </p>
 
@@ -93,21 +93,21 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
                 disabled={isAnswered}
                 className={clsx(
                   "w-full text-left p-4 rounded-xl border transition-all duration-200 flex items-center justify-between group",
-                  !isAnswered && "hover:border-indigo-300 hover:bg-indigo-50 border-slate-200",
-                  showCorrect && "bg-green-50 border-green-500 ring-1 ring-green-500",
-                  showIncorrect && "bg-red-50 border-red-300",
-                  isAnswered && !showCorrect && !showIncorrect && "opacity-50 border-slate-200"
+                  !isAnswered && "hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-indigo-50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700",
+                  showCorrect && "bg-green-50 dark:bg-green-900/20 border-green-500 ring-1 ring-green-500",
+                  showIncorrect && "bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-800",
+                  isAnswered && !showCorrect && !showIncorrect && "opacity-50 border-slate-200 dark:border-slate-800"
                 )}
               >
                 <span className={clsx(
                   "font-medium",
-                  showCorrect ? "text-green-800" : showIncorrect ? "text-red-800" : "text-slate-700"
+                  showCorrect ? "text-green-800 dark:text-green-300" : showIncorrect ? "text-red-800 dark:text-red-300" : "text-slate-700 dark:text-slate-300"
                 )}>
                   {choice}
                 </span>
                 
-                {showCorrect && <CheckCircle2 className="w-5 h-5 text-green-600" />}
-                {showIncorrect && <XCircle className="w-5 h-5 text-red-500" />}
+                {showCorrect && <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />}
+                {showIncorrect && <XCircle className="w-5 h-5 text-red-500 dark:text-red-400" />}
               </button>
             );
           })}
@@ -117,7 +117,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
           <div className="mt-6 flex justify-end">
             <button
               onClick={nextQuestion}
-              className="px-6 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors font-medium flex items-center gap-2"
+              className="px-6 py-2 bg-slate-900 dark:bg-indigo-600 text-white rounded-lg hover:bg-slate-800 dark:hover:bg-indigo-700 transition-colors font-medium flex items-center gap-2"
             >
               {currentQuestionIndex < questions.length - 1 ? "Next Question" : "Finish Quiz"}
             </button>
