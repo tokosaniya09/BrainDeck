@@ -98,10 +98,11 @@ export class GeminiAIService implements IAIService {
   }
 
   // Shared helper to handle the common generation logic
-  private async executeGeneration(prompt: string, correlationId?: string): Promise<StudySet> {
+  // 'contents' matches the parameter structure for generateContent (string | Part | Part[])
+  private async executeGeneration(contents: any, correlationId?: string): Promise<StudySet> {
       let attempts = 0;
       const MAX_RETRIES = 2;
-      let currentPrompt = prompt;
+      let currentContents = contents;
 
       while (attempts <= MAX_RETRIES) {
         try {
@@ -109,7 +110,7 @@ export class GeminiAIService implements IAIService {
 
           const response = await this.ai.models.generateContent({
             model: "gemini-2.5-flash",
-            contents: currentPrompt,
+            contents: currentContents,
             config: {
               systemInstruction: "You are a concise, accurate educational assistant.",
               responseMimeType: "application/json",
@@ -147,13 +148,18 @@ export class GeminiAIService implements IAIService {
           if (attempts > MAX_RETRIES) {
              throw error; 
           }
-
-          currentPrompt = `${prompt}
           
-          IMPORTANT: Your previous attempt failed. 
-          Error details: ${error.message}
-          
-          Please correct the JSON output. Ensure strict adherence to the schema.`;
+          // For retry logic with simple text prompts, we can append context. 
+          // For complex Part[] objects (images), modifying the retry prompt is harder, 
+          // so we mostly rely on temperature adjustment in the loop.
+          if (typeof currentContents === 'string') {
+              currentContents = `${currentContents}
+              
+              IMPORTANT: Your previous attempt failed. 
+              Error details: ${error.message}
+              
+              Please correct the JSON output. Ensure strict adherence to the schema.`;
+          }
         }
       }
 
@@ -167,10 +173,31 @@ export class GeminiAIService implements IAIService {
     });
   }
 
-  async generateFlashcardsFromContent(content: string, correlationId?: string): Promise<StudySet> {
+  async generateFlashcardsFromContent(content?: string, instructions?: string, correlationId?: string, image?: { data: string, mimeType: string }): Promise<StudySet> {
     return aiCircuitBreaker.execute(async () => {
-      const prompt = PROMPTS.generateStudySetFromContent(content);
-      return this.executeGeneration(prompt, correlationId);
+      let promptParts: any[] = [];
+
+      if (image) {
+        // Multimodal Input: Text Instructions + Image Data
+        const textPrompt = PROMPTS.generateStudySetFromImage(instructions);
+        promptParts = [
+          { text: textPrompt },
+          { 
+            inlineData: {
+              mimeType: image.mimeType,
+              data: image.data
+            } 
+          }
+        ];
+        return this.executeGeneration(promptParts, correlationId);
+
+      } else if (content) {
+        // Text-only Input
+        const textPrompt = PROMPTS.generateStudySetFromContent(content, instructions);
+        return this.executeGeneration(textPrompt, correlationId);
+      } else {
+        throw new Error("No content provided for generation");
+      }
     });
   }
 }

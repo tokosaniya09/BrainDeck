@@ -12,6 +12,11 @@ interface JobData {
   embedding?: number[];
   correlationId?: string;
   content?: string; // Raw text from file uploads
+  instructions?: string; // Optional user instructions
+  image?: { // New: For image uploads
+    data: string; // base64
+    mimeType: string;
+  };
 }
 
 export class FlashcardQueueService {
@@ -31,23 +36,22 @@ export class FlashcardQueueService {
     this.queue = new Queue(QUEUE_NAME, { connection });
     
     this.worker = new Worker(QUEUE_NAME, async (job: Job<JobData>) => {
-      const { topic, userId, embedding, correlationId, content } = job.data;
-      logger.info(`[Job ${job.id}] 🔄 Processing`, { topic, userId, correlationId, hasContent: !!content });
+      const { topic, userId, embedding, correlationId, content, instructions, image } = job.data;
+      logger.info(`[Job ${job.id}] 🔄 Processing`, { topic, userId, correlationId, hasContent: !!content, hasImage: !!image });
       
       try {
         let studySet;
         
         // A. Generate Content via AI Service
-        if (content) {
-          // If raw content is provided (file upload), generate from content
-          studySet = await this.aiService.generateFlashcardsFromContent(content, correlationId);
+        if (content || image) {
+          // If raw content (text or image) is provided, generate from content
+          studySet = await this.aiService.generateFlashcardsFromContent(content, instructions, correlationId, image);
         } else {
           // Standard topic-based generation
           studySet = await this.aiService.generateFlashcards(topic, correlationId);
         }
         
-        // B. Generate embedding for the AI-determined topic if we don't have one (for file uploads)
-        // or if we skipped it in the controller for speed.
+        // B. Generate embedding for the AI-determined topic if we don't have one 
         let finalEmbedding = embedding;
         if (!finalEmbedding) {
           try {
@@ -87,8 +91,16 @@ export class FlashcardQueueService {
     });
   }
 
-  async addJob(topic: string, userId: number | undefined, embedding?: number[], correlationId?: string, content?: string): Promise<string> {
-    const job = await this.queue.add('generate-studyset', { topic, userId, embedding, correlationId, content }, {
+  async addJob(
+    topic: string, 
+    userId: number | undefined, 
+    embedding?: number[], 
+    correlationId?: string, 
+    content?: string, 
+    instructions?: string,
+    image?: { data: string, mimeType: string }
+  ): Promise<string> {
+    const job = await this.queue.add('generate-studyset', { topic, userId, embedding, correlationId, content, instructions, image }, {
       attempts: 3,
       backoff: { type: 'exponential', delay: 1000 },
       removeOnComplete: { age: 3600, count: 100 },

@@ -18,10 +18,37 @@ export interface HistoryItem {
 const POLL_INTERVAL_MS = 2000;
 const MAX_ATTEMPTS = 60;
 
-// Get the API Base URL from environment variables
-// In local dev, this is usually empty (uses proxy).
-// In production, this should be 'https://your-backend.onrender.com'
-const API_BASE_URL = (import.meta as any).env.VITE_API_URL || '';
+// --- API URL CONFIGURATION ---
+// 1. In Development: Always use '/api'. 
+//    This forces the request to hit the Vite Dev Server (localhost:5173/api), 
+//    which then proxies it to the Backend (localhost:3000/api).
+// 2. In Production: Use the VITE_API_URL env var.
+const isProd = (import.meta as any).env.PROD;
+let API_BASE_URL = '';
+
+if (isProd) {
+  // Get URL from .env (e.g., https://my-backend.onrender.com)
+  const envUrl = (import.meta as any).env.VITE_API_URL;
+  
+  if (envUrl) {
+    API_BASE_URL = envUrl;
+    // Ensure it doesn't end with a slash
+    if (API_BASE_URL.endsWith('/')) {
+      API_BASE_URL = API_BASE_URL.slice(0, -1);
+    }
+    // Ensure it ends with /api
+    if (!API_BASE_URL.endsWith('/api')) {
+      API_BASE_URL += '/api';
+    }
+  } else {
+    // Fallback for production if variable is missing (assumes same-domain hosting)
+    API_BASE_URL = '/api';
+  }
+} else {
+  // DEVELOPMENT MODE
+  // Ignore VITE_API_URL to prevent confusion. Always use local proxy.
+  API_BASE_URL = '/api';
+}
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -155,12 +182,16 @@ export const generateStudySet = async (
 
 export const uploadFileAndGenerate = async (
   file: File,
+  instructions?: string,
   onStatusUpdate?: (status: string) => void
 ): Promise<StudySet> => {
   if (onStatusUpdate) onStatusUpdate('initiating');
 
   const formData = new FormData();
   formData.append('file', file);
+  if (instructions) {
+    formData.append('instructions', instructions);
+  }
 
   const startResponse = await fetch(`${API_BASE_URL}/generate/file`, {
     method: 'POST',

@@ -44,9 +44,16 @@ const allowedOrigins = [
 ].filter(Boolean);
 app.use((0, cors_1.default)({
     origin: function (origin, callback) {
+        // 1. Allow requests with no origin (like mobile apps or curl requests)
         if (!origin)
             return callback(null, true);
-        return callback(null, true);
+        // 2. Check if the incoming origin is in our allowed list
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true); // Allowed!
+        }
+        else {
+            callback(new Error('Not allowed by CORS')); // Blocked!
+        }
     },
     credentials: true
 }));
@@ -154,9 +161,21 @@ app.post('/api/generate/file', auth_2.optionalAuth, rateLimiter_1.generationLimi
             return res.status(400).json({ error: "No file uploaded." });
         const userId = req.user?.id;
         const originalName = req.file.originalname;
+        const mimeType = req.file.mimetype;
+        // Extract optional instructions from body (parsed by multer)
+        const instructions = req.body.instructions || undefined;
         let extractedText = '';
-        // Extract Text based on Mimetype
-        if (req.file.mimetype === 'application/pdf') {
+        let imageData;
+        // Logic Tree: Image vs Text/PDF
+        if (mimeType.startsWith('image/')) {
+            // Convert buffer to base64 for Gemini Multimodal
+            const base64Data = req.file.buffer.toString('base64');
+            imageData = {
+                data: base64Data,
+                mimeType: mimeType
+            };
+        }
+        else if (mimeType === 'application/pdf') {
             try {
                 const pdfData = await pdf_parse_1.default(req.file.buffer);
                 extractedText = pdfData.text;
@@ -166,22 +185,26 @@ app.post('/api/generate/file', auth_2.optionalAuth, rateLimiter_1.generationLimi
                 return res.status(400).json({ error: "Failed to parse PDF file." });
             }
         }
-        else if (req.file.mimetype === 'text/plain') {
+        else if (mimeType === 'text/plain') {
             extractedText = req.file.buffer.toString('utf-8');
         }
         else {
-            return res.status(400).json({ error: "Unsupported file type. Use PDF or TXT." });
+            return res.status(400).json({ error: "Unsupported file type. Use PDF, TXT, PNG, or JPG." });
         }
-        if (extractedText.trim().length < 50) {
+        logger_1.logger.info("File content:", extractedText.slice(0, 100), { correlationId });
+        // Only check text length if it's NOT an image job
+        if (!imageData && extractedText.trim().length < 50) {
             return res.status(400).json({ error: "File content is too short to generate a study set." });
         }
-        // Clean up text slightly to save tokens/bandwidth
-        extractedText = extractedText.replace(/\s+/g, ' ').trim();
+        if (extractedText) {
+            extractedText = extractedText.replace(/\s+/g, ' ').trim();
+        }
         // Use filename as the initial "Topic" identifier for the job
         const topicLabel = `File: ${originalName}`;
-        // Add to Queue with the content
-        const jobId = await queueService.addJob(topicLabel, userId, undefined, correlationId, extractedText);
-        logger_1.logger.info(`File Job Accepted`, { jobId, filename: originalName, userId, correlationId });
+        // Add to Queue with either content (text) OR image data
+        const jobId = await queueService.addJob(topicLabel, userId, undefined, correlationId, extractedText || undefined, instructions, imageData // Pass image object if exists
+        );
+        logger_1.logger.info(`File Job Accepted`, { jobId, filename: originalName, userId, correlationId, isImage: !!imageData });
         res.status(202).json({
             jobId,
             status: 'pending',

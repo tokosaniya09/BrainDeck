@@ -85,16 +85,17 @@ class GeminiAIService {
         });
     }
     // Shared helper to handle the common generation logic
-    async executeGeneration(prompt, correlationId) {
+    // 'contents' matches the parameter structure for generateContent (string | Part | Part[])
+    async executeGeneration(contents, correlationId) {
         let attempts = 0;
         const MAX_RETRIES = 2;
-        let currentPrompt = prompt;
+        let currentContents = contents;
         while (attempts <= MAX_RETRIES) {
             try {
                 logger_1.logger.info(`🤖 AI Generation Attempt ${attempts + 1}/${MAX_RETRIES + 1}`, { correlationId });
                 const response = await this.ai.models.generateContent({
                     model: "gemini-2.5-flash",
-                    contents: currentPrompt,
+                    contents: currentContents,
                     config: {
                         systemInstruction: "You are a concise, accurate educational assistant.",
                         responseMimeType: "application/json",
@@ -126,12 +127,17 @@ class GeminiAIService {
                 if (attempts > MAX_RETRIES) {
                     throw error;
                 }
-                currentPrompt = `${prompt}
-          
-          IMPORTANT: Your previous attempt failed. 
-          Error details: ${error.message}
-          
-          Please correct the JSON output. Ensure strict adherence to the schema.`;
+                // For retry logic with simple text prompts, we can append context. 
+                // For complex Part[] objects (images), modifying the retry prompt is harder, 
+                // so we mostly rely on temperature adjustment in the loop.
+                if (typeof currentContents === 'string') {
+                    currentContents = `${currentContents}
+              
+              IMPORTANT: Your previous attempt failed. 
+              Error details: ${error.message}
+              
+              Please correct the JSON output. Ensure strict adherence to the schema.`;
+                }
             }
         }
         throw new Error("Unexpected end of retry loop");
@@ -142,10 +148,31 @@ class GeminiAIService {
             return this.executeGeneration(prompt, correlationId);
         });
     }
-    async generateFlashcardsFromContent(content, correlationId) {
+    async generateFlashcardsFromContent(content, instructions, correlationId, image) {
         return circuitBreaker_1.aiCircuitBreaker.execute(async () => {
-            const prompt = prompts_1.PROMPTS.generateStudySetFromContent(content);
-            return this.executeGeneration(prompt, correlationId);
+            let promptParts = [];
+            if (image) {
+                // Multimodal Input: Text Instructions + Image Data
+                const textPrompt = prompts_1.PROMPTS.generateStudySetFromImage(instructions);
+                promptParts = [
+                    { text: textPrompt },
+                    {
+                        inlineData: {
+                            mimeType: image.mimeType,
+                            data: image.data
+                        }
+                    }
+                ];
+                return this.executeGeneration(promptParts, correlationId);
+            }
+            else if (content) {
+                // Text-only Input
+                const textPrompt = prompts_1.PROMPTS.generateStudySetFromContent(content, instructions);
+                return this.executeGeneration(textPrompt, correlationId);
+            }
+            else {
+                throw new Error("No content provided for generation");
+            }
         });
     }
 }
