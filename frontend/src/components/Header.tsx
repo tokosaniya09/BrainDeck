@@ -31,10 +31,12 @@ const Header: React.FC<HeaderProps> = ({ queueStats, onReset, onOpenAuth }) => {
           className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity" 
           onClick={onReset}
         >
-          <div className="bg-indigo-600 p-1.5 rounded-lg shadow-sm shadow-indigo-200 dark:shadow-none">
-            <BrainCircuit className="w-6 h-6 text-white" />
+          {/* <div className="bg-indigo-600 p-1.5 rounded-lg shadow-sm shadow-indigo-200 dark:shadow-none"> */}
+          <div>
+            {/* <BrainCircuit className="w-6 h-6 text-white" /> */}
+            <img src="images/brain-cube.png" alt="" width="50" height="50" />
           </div>
-          <span className="font-bold text-xl tracking-tight text-slate-800 dark:text-slate-100">FlashMind AI</span>
+          <span className="font-bold text-xl tracking-tight text-slate-800 dark:text-slate-100">BrainDeck AI</span>
         </div>
         
         <div className="flex items-center gap-4">

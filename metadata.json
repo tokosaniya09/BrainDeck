@@ -1,5 +1,5 @@
 {
-  "name": "FlashMind AI",
+  "name": "BrainDeck AI",
   "description": "An AI-powered study aid that generates flashcards and quizzes from any topic using Gemini.",
   "requestFramePermissions": []
 }

@@ -1,6 +1,6 @@
-# 🧠 FlashMind AI
+# 🧠 BrainDeck AI
 
-**FlashMind AI** is an intelligent study companion that instantly transforms any topic into a comprehensive study set. Powered by **Google Gemini 2.5**, it generates interactive flashcards and quizzes, using **Vector Semantic Search** to cache and retrieve similar topics instantly.
+**BrainDeck AI** is an intelligent study companion that instantly transforms any topic into a comprehensive study set. Powered by **Google Gemini 2.5**, it generates interactive flashcards and quizzes, using **Vector Semantic Search** to cache and retrieve similar topics instantly.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-blue)
@@ -43,15 +43,15 @@
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/yourusername/flashmind-ai.git
-cd flashmind-ai
+git clone https://github.com/tokosaniya09/braindeck-ai.git
+cd braindeck-ai
 ```
 
 ### 2. Environment Setup
 Create a `.env` file in the `backend` folder:
 ```env
 PORT=3000
-DATABASE_URL=postgres://postgres:password@localhost:5432/flashmind
+DATABASE_URL=postgres://postgres:password@localhost:5432/braindeck
 REDIS_URL=redis://localhost:6379
 API_KEY=your_google_gemini_api_key
 JWT_SECRET=your_super_secret_jwt_key

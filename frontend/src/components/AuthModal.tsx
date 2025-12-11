@@ -195,7 +195,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
               <div className="mt-6 text-center">
                 <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">
-                  {isLogin ? "New to FlashMind? " : "Already have an account? "}
+                  {isLogin ? "New to BrainDeck? " : "Already have an account? "}
                   <button
                     onClick={toggleMode}
                     className="text-indigo-600 dark:text-indigo-400 font-semibold hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors"

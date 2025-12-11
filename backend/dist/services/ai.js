@@ -20,6 +20,7 @@ const QuizQuestionSchema = zod_1.z.object({
     answer_index: zod_1.z.number()
 });
 const StudySetSchema = zod_1.z.object({
+    learning_goal: zod_1.z.string().optional(), // Added for Thought Bubble technique (stripped before saving)
     topic: zod_1.z.string(),
     summary: zod_1.z.string(),
     estimated_study_time_minutes: zod_1.z.number(),
@@ -30,7 +31,11 @@ const StudySetSchema = zod_1.z.object({
 const geminiStudySetSchema = {
     type: genai_1.Type.OBJECT,
     properties: {
-        topic: { type: genai_1.Type.STRING, description: "The topic of the study set" },
+        learning_goal: {
+            type: genai_1.Type.STRING,
+            description: "Analyze the user's topic. Is it a broad subject or a specific question? Describe exactly what the user wants to learn."
+        },
+        topic: { type: genai_1.Type.STRING, description: "Refined topic title" },
         summary: { type: genai_1.Type.STRING, description: "A brief summary of the topic (2-4 sentences)" },
         estimated_study_time_minutes: { type: genai_1.Type.INTEGER, description: "Estimated time in minutes to study this set" },
         flashcards: {
@@ -62,7 +67,7 @@ const geminiStudySetSchema = {
             }
         }
     },
-    required: ["topic", "summary", "estimated_study_time_minutes", "flashcards", "example_quiz_questions"]
+    required: ["learning_goal", "topic", "summary", "estimated_study_time_minutes", "flashcards", "example_quiz_questions"]
 };
 // --- Service Implementation ---
 class GeminiAIService {
@@ -119,6 +124,8 @@ class GeminiAIService {
                     const errorMsg = validationResult.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
                     throw new Error(`Schema Validation Failed: ${errorMsg}`);
                 }
+                // Note: validationResult.data will strip 'learning_goal' if it's not in the target StudySet type/interface
+                // but we keep it in schema validation to ensure the model generated it.
                 return validationResult.data;
             }
             catch (error) {
@@ -127,16 +134,16 @@ class GeminiAIService {
                 if (attempts > MAX_RETRIES) {
                     throw error;
                 }
-                // For retry logic with simple text prompts, we can append context. 
-                // For complex Part[] objects (images), modifying the retry prompt is harder, 
-                // so we mostly rely on temperature adjustment in the loop.
                 if (typeof currentContents === 'string') {
+                    // Pro Move: Make the retry prompt stronger and context-aware
                     currentContents = `${currentContents}
               
-              IMPORTANT: Your previous attempt failed. 
-              Error details: ${error.message}
+              SYSTEM NOTE: Your previous attempt failed validation or quality checks.
+              Error: ${error.message}
               
-              Please correct the JSON output. Ensure strict adherence to the schema.`;
+              Please try again. Ensure you are NOT just defining keywords. 
+              Focus on the RELATIONSHIPS between concepts.
+              Output valid JSON only.`;
                 }
             }
         }

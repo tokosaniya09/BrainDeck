@@ -1,6 +1,6 @@
-# 🧠 FlashMind AI - Project Architecture Map
+# 🧠 BrainDeck AI - Project Architecture Map
 
-This document outlines the structure, data flow, and connections within the FlashMind AI application.
+This document outlines the structure, data flow, and connections within the BrainDeck AI application.
 
 ## 📂 Directory Structure
 
