@@ -1,6 +1,6 @@
-# 🧠 BrainDeck AI - Project Architecture Map
+# 🧠 FlashMind AI - Project Architecture Map
 
-This document outlines the structure, data flow, and connections within the BrainDeck AI application.
+This document outlines the structure, data flow, and connections within the FlashMind AI application.
 
 ## 📂 Directory Structure
 
@@ -27,7 +27,7 @@ This document outlines the structure, data flow, and connections within the Brai
 │       │   ├── AuthContext.tsx  # Stores User & Token
 │       │   └── ThemeContext.tsx # Stores Light/Dark mode
 │       ├── pages/           # Full Screen Views
-│       │   ├── HomePage.tsx     # Landing page & History
+│       │   ├── HomePage.tsx     # Landing page, File Upload & History
 │       │   └── StudySetPage.tsx # The generated content view
 │       └── utils/
 │           └── avatarUtils.ts   # Deterministic random avatar generator
@@ -37,13 +37,13 @@ This document outlines the structure, data flow, and connections within the Brai
     ├── package.json         # Backend dependencies
     ├── migrations/          # SQL scripts to create DB tables
     └── src/
-        ├── index.ts         # Server Entry, Rate Limits, Middleware
+        ├── index.ts         # Server Entry, Rate Limits, File Upload Routes
         ├── db/              # Database Connection (Postgres)
         ├── config/          # Prompts & Constants
         ├── middleware/      # Auth checks & Rate Limiters
         ├── routes/          # API Route Definitions (Auth)
         ├── services/        # Business Logic
-        │   ├── ai.ts        # Gemini API interaction (Generation & Embedding)
+        │   ├── ai.ts        # Gemini API (Multimodal Generation & Embedding)
         │   └── queue.ts     # BullMQ/Redis Job Queue
         └── repositories/    # Database Access Layer
             └── StudySetRepository.ts # SQL Queries (Insert, Select, Vector Search)
@@ -74,18 +74,24 @@ graph TD
 
 ## 🔄 Key Workflows
 
-### 1. The Generation Flow (The Core Feature)
-1.  **User** types a topic (e.g., "Photosynthesis") in `HomePage.tsx`.
-2.  **Frontend** calls `api/client.ts` -> `POST /api/generate`.
+### 1. The Generation Flow (Topic & Multimodal)
+1.  **User** interacts with `HomePage.tsx`:
+    *   Types a topic (e.g., "Photosynthesis").
+    *   **OR** Uploads a file (PDF, Image of notes).
+2.  **Frontend** calls API:
+    *   Topic: `POST /api/generate`
+    *   File: `POST /api/generate/file` (Multipart)
 3.  **Backend** (`index.ts`):
+    *   **File Parsing**: Extracts text from PDF or converts Image to Base64 for Vision API.
     *   Checks **Rate Limits** (Redis).
-    *   Checks **Exact Cache** (Postgres): Has this specific string been asked?
-    *   Checks **Semantic Cache** (Postgres + Gemini Embedding): Has something *similar* been asked?
-4.  **Cache Miss**: Backend adds a job to the **Redis Queue** and returns a `jobId` immediately.
+    *   Checks **Exact Cache** (Postgres) - *Topic mode only*.
+4.  **Cache Miss**: Backend adds a job to the **Redis Queue**. Payload contains `topic`, `content` (text), or `image` (base64).
 5.  **Frontend**: Starts polling `/api/jobs/:id`.
 6.  **Worker** (`services/queue.ts`):
     *   Picks up the job.
-    *   Calls **Gemini API** (`services/ai.ts`) with a strict JSON system prompt.
+    *   Calls **Gemini API** (`services/ai.ts`):
+        *   **Educational Architect Logic**: Uses "Thought Bubble" technique (`learning_goal`) to plan content before generating JSON.
+        *   **Multimodal**: If image exists, sends image parts to Gemini 2.5 Flash for OCR/Analysis.
     *   Saves the result to **Postgres**.
 7.  **Frontend**: Receives "Completed" status, gets the ID, and navigates to `StudySetPage.tsx`.
 

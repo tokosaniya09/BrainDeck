@@ -1,6 +1,6 @@
-# 🧠 BrainDeck AI
+# 🧠 FlashMind AI
 
-**BrainDeck AI** is an intelligent study companion that instantly transforms any topic into a comprehensive study set. Powered by **Google Gemini 2.5**, it generates interactive flashcards and quizzes, using **Vector Semantic Search** to cache and retrieve similar topics instantly.
+**FlashMind AI** is an intelligent study companion that instantly transforms any topic into a comprehensive study set. Powered by **Google Gemini 2.5**, it generates interactive flashcards and quizzes, using **Vector Semantic Search** to cache and retrieve similar topics instantly.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-blue)
@@ -10,6 +10,8 @@
 ## ✨ Features
 
 - **🚀 Instant Generation**: Type any topic (e.g., "Quantum Physics", "French Revolution") and get a structured study set in seconds.
+- **📸 Visual Learning (OCR)**: Upload photos of handwritten notes, diagrams, or textbook pages. Gemini's multimodal vision identifies concepts and converts them into flashcards.
+- **🧠 Deep Understanding Engine**: Uses advanced "Chain-of-Thought" prompting. The AI plans the `learning_goal` first, ensuring flashcards focus on mechanisms ("Why/How") rather than simple definitions.
 - **⚡ Smart Caching (RAG)**: Uses **PostgreSQL + pgvector** to store embeddings. If a user asks for "React Hooks" and another asks for "ReactJS Hooks", the system recognizes the semantic similarity and serves the cached result instantly.
 - **🃏 Interactive Flashcards**: 3D flip animations with difficulty rating.
 - **📝 Practice Quizzes**: Auto-generated multiple-choice questions to test retention.
@@ -32,6 +34,7 @@
 - **Database**: PostgreSQL (with `pgvector` extension)
 - **Queue System**: Redis + BullMQ
 - **AI Model**: Google Gemini 2.5 Flash
+- **File Handling**: Multer (Uploads) + PDF-Parse
 - **Validation**: Zod
 
 ## 🚀 Getting Started
@@ -43,15 +46,15 @@
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/tokosaniya09/braindeck-ai.git
-cd braindeck-ai
+git clone https://github.com/yourusername/flashmind-ai.git
+cd flashmind-ai
 ```
 
 ### 2. Environment Setup
 Create a `.env` file in the `backend` folder:
 ```env
 PORT=3000
-DATABASE_URL=postgres://postgres:password@localhost:5432/braindeck
+DATABASE_URL=postgres://postgres:password@localhost:5432/flashmind
 REDIS_URL=redis://localhost:6379
 API_KEY=your_google_gemini_api_key
 JWT_SECRET=your_super_secret_jwt_key
@@ -103,6 +106,6 @@ See `PROJECT_MAP.md` for a detailed breakdown of the file structure and architec
 
 Contributions are welcome! Please fork the repository and submit a pull request.
 
-## 📄 License
+<!-- ## 📄 License
 
-This project is open source and available under the [MIT License](LICENSE).
+This project is open source and available under the [MIT License](LICENSE). -->
