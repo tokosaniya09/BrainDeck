@@ -2,7 +2,7 @@
 
 **FlashMind AI** is an intelligent study companion that instantly transforms any topic into a comprehensive study set. Powered by **Google Gemini 2.5**, it generates interactive flashcards and quizzes, using **Vector Semantic Search** to cache and retrieve similar topics instantly.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+<!-- ![License](https://img.shields.io/badge/license-MIT-blue.svg) -->
 ![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-blue)
 ![Backend](https://img.shields.io/badge/Backend-Node.js%20%2B%20Express-green)
 ![AI](https://img.shields.io/badge/AI-Google%20Gemini-orange)
