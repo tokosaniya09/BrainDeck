@@ -6,6 +6,14 @@ import { logger } from '../utils/logger';
 
 const QUEUE_NAME = 'flashcard-generation';
 
+interface JobData {
+  topic: string;
+  userId?: number;
+  embedding?: number[];
+  correlationId?: string;
+  content?: string; // Raw text from file uploads
+}
+
 export class FlashcardQueueService {
   public queue: Queue;
   private worker: Worker;
@@ -22,16 +30,36 @@ export class FlashcardQueueService {
 
     this.queue = new Queue(QUEUE_NAME, { connection });
     
-    this.worker = new Worker(QUEUE_NAME, async (job: Job) => {
-      const { topic, userId, embedding, correlationId } = job.data;
-      logger.info(`[Job ${job.id}] 🔄 Processing`, { topic, userId, correlationId });
+    this.worker = new Worker(QUEUE_NAME, async (job: Job<JobData>) => {
+      const { topic, userId, embedding, correlationId, content } = job.data;
+      logger.info(`[Job ${job.id}] 🔄 Processing`, { topic, userId, correlationId, hasContent: !!content });
       
       try {
-        // A. Generate Content via AI Service
-        const studySet = await this.aiService.generateFlashcards(topic, correlationId);
+        let studySet;
         
-        // B. Save to Database using Repository
-        const newSetId = await this.studySetRepository.createStudySet(studySet, embedding);
+        // A. Generate Content via AI Service
+        if (content) {
+          // If raw content is provided (file upload), generate from content
+          studySet = await this.aiService.generateFlashcardsFromContent(content, correlationId);
+        } else {
+          // Standard topic-based generation
+          studySet = await this.aiService.generateFlashcards(topic, correlationId);
+        }
+        
+        // B. Generate embedding for the AI-determined topic if we don't have one (for file uploads)
+        // or if we skipped it in the controller for speed.
+        let finalEmbedding = embedding;
+        if (!finalEmbedding) {
+          try {
+             // Generate embedding based on the result topic for future searches
+             finalEmbedding = await this.aiService.generateEmbedding(studySet.topic);
+          } catch (e) {
+             logger.warn("Failed to generate embedding for result", { correlationId });
+          }
+        }
+
+        // C. Save to Database using Repository
+        const newSetId = await this.studySetRepository.createStudySet(studySet, finalEmbedding);
 
         // Link this new set to the user's history ONLY if userId exists
         if (userId) {
@@ -59,8 +87,8 @@ export class FlashcardQueueService {
     });
   }
 
-  async addJob(topic: string, userId: number | undefined, embedding?: number[], correlationId?: string): Promise<string> {
-    const job = await this.queue.add('generate-studyset', { topic, userId, embedding, correlationId }, {
+  async addJob(topic: string, userId: number | undefined, embedding?: number[], correlationId?: string, content?: string): Promise<string> {
+    const job = await this.queue.add('generate-studyset', { topic, userId, embedding, correlationId, content }, {
       attempts: 3,
       backoff: { type: 'exponential', delay: 1000 },
       removeOnComplete: { age: 3600, count: 100 },

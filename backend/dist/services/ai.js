@@ -84,57 +84,68 @@ class GeminiAIService {
             return response.embeddings[0].values;
         });
     }
-    async generateFlashcards(topic, correlationId) {
-        return circuitBreaker_1.aiCircuitBreaker.execute(async () => {
-            let currentPrompt = prompts_1.PROMPTS.generateStudySet(topic);
-            let attempts = 0;
-            const MAX_RETRIES = 2;
-            while (attempts <= MAX_RETRIES) {
-                try {
-                    logger_1.logger.info(`🤖 AI Generation Attempt ${attempts + 1}/${MAX_RETRIES + 1}`, { topic, correlationId });
-                    const response = await this.ai.models.generateContent({
-                        model: "gemini-2.5-flash",
-                        contents: currentPrompt,
-                        config: {
-                            systemInstruction: "You are a concise, accurate educational assistant.",
-                            responseMimeType: "application/json",
-                            responseSchema: geminiStudySetSchema,
-                            temperature: 0.2 + (attempts * 0.1),
-                        }
-                    });
-                    const text = response.text;
-                    if (!text) {
-                        throw new Error("Empty response from Gemini");
+    // Shared helper to handle the common generation logic
+    async executeGeneration(prompt, correlationId) {
+        let attempts = 0;
+        const MAX_RETRIES = 2;
+        let currentPrompt = prompt;
+        while (attempts <= MAX_RETRIES) {
+            try {
+                logger_1.logger.info(`🤖 AI Generation Attempt ${attempts + 1}/${MAX_RETRIES + 1}`, { correlationId });
+                const response = await this.ai.models.generateContent({
+                    model: "gemini-2.5-flash",
+                    contents: currentPrompt,
+                    config: {
+                        systemInstruction: "You are a concise, accurate educational assistant.",
+                        responseMimeType: "application/json",
+                        responseSchema: geminiStudySetSchema,
+                        temperature: 0.2 + (attempts * 0.1),
                     }
-                    let rawData;
-                    try {
-                        rawData = JSON.parse(this.cleanJson(text));
-                    }
-                    catch (e) {
-                        throw new Error("Invalid JSON syntax received from model");
-                    }
-                    const validationResult = StudySetSchema.safeParse(rawData);
-                    if (!validationResult.success) {
-                        const errorMsg = validationResult.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
-                        throw new Error(`Schema Validation Failed: ${errorMsg}`);
-                    }
-                    return validationResult.data;
+                });
+                const text = response.text;
+                if (!text) {
+                    throw new Error("Empty response from Gemini");
                 }
-                catch (error) {
-                    attempts++;
-                    logger_1.logger.warn(`⚠️ Attempt ${attempts} failed`, { error: error.message, correlationId });
-                    if (attempts > MAX_RETRIES) {
-                        throw error;
-                    }
-                    currentPrompt = `${prompts_1.PROMPTS.generateStudySet(topic)}
+                let rawData;
+                try {
+                    rawData = JSON.parse(this.cleanJson(text));
+                }
+                catch (e) {
+                    throw new Error("Invalid JSON syntax received from model");
+                }
+                const validationResult = StudySetSchema.safeParse(rawData);
+                if (!validationResult.success) {
+                    const errorMsg = validationResult.error.issues.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+                    throw new Error(`Schema Validation Failed: ${errorMsg}`);
+                }
+                return validationResult.data;
+            }
+            catch (error) {
+                attempts++;
+                logger_1.logger.warn(`⚠️ Attempt ${attempts} failed`, { error: error.message, correlationId });
+                if (attempts > MAX_RETRIES) {
+                    throw error;
+                }
+                currentPrompt = `${prompt}
           
           IMPORTANT: Your previous attempt failed. 
           Error details: ${error.message}
           
           Please correct the JSON output. Ensure strict adherence to the schema.`;
-                }
             }
-            throw new Error("Unexpected end of retry loop");
+        }
+        throw new Error("Unexpected end of retry loop");
+    }
+    async generateFlashcards(topic, correlationId) {
+        return circuitBreaker_1.aiCircuitBreaker.execute(async () => {
+            const prompt = prompts_1.PROMPTS.generateStudySet(topic);
+            return this.executeGeneration(prompt, correlationId);
+        });
+    }
+    async generateFlashcardsFromContent(content, correlationId) {
+        return circuitBreaker_1.aiCircuitBreaker.execute(async () => {
+            const prompt = prompts_1.PROMPTS.generateStudySetFromContent(content);
+            return this.executeGeneration(prompt, correlationId);
         });
     }
 }

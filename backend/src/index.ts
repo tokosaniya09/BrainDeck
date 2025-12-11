@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import { z } from 'zod'; 
 import { v4 as uuidv4 } from 'uuid';
+import multer from 'multer';
+import pdf from 'pdf-parse';
 
 import { studySetRepository, initDB } from './db';
 import authRoutes from './routes/auth';
@@ -28,6 +30,12 @@ if (!process.env.GOOGLE_CLIENT_ID) {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Multer Setup (Memory Storage)
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+});
 
 // Trust Proxy
 app.set('trust proxy', 1);
@@ -56,7 +64,7 @@ app.use((req: any, res, next) => {
 // Apply General Rate Limiter
 app.use(generalLimiter as any);
 
-// Limit payload size
+// Limit payload size (for JSON)
 app.use(express.json({ limit: '10kb' }) as any);
 
 app.get('/health', (req, res) => {
@@ -81,6 +89,7 @@ const GenerateSchema = z.object({
     }, "Invalid topic detected. Please provide a clear educational topic.")
 });
 
+// Standard Text Generation Route
 app.post('/api/generate', optionalAuth, generationLimiter as any, async (req: any, res: any) => {
   const correlationId = req.id;
   try {
@@ -157,6 +166,60 @@ app.post('/api/generate', optionalAuth, generationLimiter as any, async (req: an
   }
 });
 
+// File Upload Generation Route
+app.post('/api/generate/file', optionalAuth, generationLimiter as any, upload.single('file') as any, async (req: any, res: any) => {
+  const correlationId = req.id;
+  try {
+    if (!process.env.API_KEY) throw new Error("API_KEY not configured.");
+    if (!req.file) return res.status(400).json({ error: "No file uploaded." });
+
+    const userId = req.user?.id;
+    const originalName = req.file.originalname;
+    
+    let extractedText = '';
+
+    // Extract Text based on Mimetype
+    if (req.file.mimetype === 'application/pdf') {
+       try {
+         const pdfData = await (pdf as any)(req.file.buffer);
+         extractedText = pdfData.text;
+       } catch (e) {
+         logger.error("PDF Parse Failed", { correlationId });
+         return res.status(400).json({ error: "Failed to parse PDF file." });
+       }
+    } else if (req.file.mimetype === 'text/plain') {
+       extractedText = req.file.buffer.toString('utf-8');
+    } else {
+       return res.status(400).json({ error: "Unsupported file type. Use PDF or TXT." });
+    }
+
+    if (extractedText.trim().length < 50) {
+      return res.status(400).json({ error: "File content is too short to generate a study set." });
+    }
+
+    // Clean up text slightly to save tokens/bandwidth
+    extractedText = extractedText.replace(/\s+/g, ' ').trim();
+
+    // Use filename as the initial "Topic" identifier for the job
+    const topicLabel = `File: ${originalName}`;
+
+    // Add to Queue with the content
+    const jobId = await queueService.addJob(topicLabel, userId, undefined, correlationId, extractedText);
+    
+    logger.info(`File Job Accepted`, { jobId, filename: originalName, userId, correlationId });
+
+    res.status(202).json({ 
+      jobId, 
+      status: 'pending', 
+      message: 'File accepted. processing.' 
+    });
+
+  } catch (error: any) {
+    logger.error('File submission error', { error: error.message, correlationId });
+    res.status(500).json({ error: 'Failed to process file upload', details: error.message });
+  }
+});
+
 app.get('/api/jobs/:id', async (req: any, res: any) => {
   try {
     const { id } = req.params;
@@ -219,5 +282,5 @@ initDB()
   })
   .catch((err) => {
     logger.error("❌ Failed to start server", { error: err });
-    process.exit(1);
+    (process as any).exit(1);
   });

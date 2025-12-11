@@ -26,10 +26,13 @@ const API_BASE_URL = (import.meta as any).env.VITE_API_URL || '';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- Auth Headers ---
-const getHeaders = () => {
-  const headers: any = {
-    'Content-Type': 'application/json',
-  };
+const getHeaders = (isMultipart: boolean = false) => {
+  const headers: any = {};
+  // DO NOT set Content-Type for multipart, browser sets it with boundary
+  if (!isMultipart) {
+    headers['Content-Type'] = 'application/json';
+  }
+  
   const token = localStorage.getItem('token');
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -78,36 +81,8 @@ export const loginWithGoogle = async (credential: string): Promise<{ token: stri
   return res.json();
 };
 
-
-export const generateStudySet = async (
-  topic: string, 
-  onStatusUpdate?: (status: string) => void
-): Promise<StudySet> => {
-  if (onStatusUpdate) onStatusUpdate('initiating');
-  
-  const startResponse = await fetch(`${API_BASE_URL}/generate`, {
-    method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify({ topic }),
-  });
-
-  if (!startResponse.ok) {
-    const errorData = await startResponse.json();
-    throw new Error(errorData.error || 'Failed to start generation job');
-  }
-
-  const initialData: JobResponse = await startResponse.json();
-
-  if (initialData.status === 'completed' && initialData.result) {
-    if (onStatusUpdate) onStatusUpdate('completed');
-    return initialData.result;
-  }
-
-  const jobId = initialData.jobId;
-  if (!jobId) {
-    throw new Error("No Job ID received from server");
-  }
-  
+// Helper to poll for results
+const pollForJob = async (jobId: string, onStatusUpdate?: (status: string) => void): Promise<StudySet> => {
   let attempts = 0;
   
   while (attempts < MAX_ATTEMPTS) {
@@ -147,6 +122,61 @@ export const generateStudySet = async (
   }
 
   throw new Error('Generation timed out. The server is taking longer than expected.');
+}
+
+export const generateStudySet = async (
+  topic: string, 
+  onStatusUpdate?: (status: string) => void
+): Promise<StudySet> => {
+  if (onStatusUpdate) onStatusUpdate('initiating');
+  
+  const startResponse = await fetch(`${API_BASE_URL}/generate`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ topic }),
+  });
+
+  if (!startResponse.ok) {
+    const errorData = await startResponse.json();
+    throw new Error(errorData.error || 'Failed to start generation job');
+  }
+
+  const initialData: JobResponse = await startResponse.json();
+
+  if (initialData.status === 'completed' && initialData.result) {
+    if (onStatusUpdate) onStatusUpdate('completed');
+    return initialData.result;
+  }
+
+  if (!initialData.jobId) throw new Error("No Job ID received from server");
+
+  return pollForJob(initialData.jobId, onStatusUpdate);
+};
+
+export const uploadFileAndGenerate = async (
+  file: File,
+  onStatusUpdate?: (status: string) => void
+): Promise<StudySet> => {
+  if (onStatusUpdate) onStatusUpdate('initiating');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const startResponse = await fetch(`${API_BASE_URL}/generate/file`, {
+    method: 'POST',
+    headers: getHeaders(true), // true = multipart/form-data
+    body: formData,
+  });
+
+  if (!startResponse.ok) {
+    const errorData = await startResponse.json();
+    throw new Error(errorData.error || 'Failed to upload file');
+  }
+
+  const initialData: JobResponse = await startResponse.json();
+  if (!initialData.jobId) throw new Error("No Job ID received from server");
+
+  return pollForJob(initialData.jobId, onStatusUpdate);
 };
 
 export const fetchHistory = async (): Promise<HistoryItem[]> => {

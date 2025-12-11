@@ -8,6 +8,8 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const zod_1 = require("zod");
 const uuid_1 = require("uuid");
+const multer_1 = __importDefault(require("multer"));
+const pdf_parse_1 = __importDefault(require("pdf-parse"));
 const db_1 = require("./db");
 const auth_1 = __importDefault(require("./routes/auth"));
 const auth_2 = require("./middleware/auth");
@@ -27,6 +29,11 @@ if (!process.env.GOOGLE_CLIENT_ID) {
 }
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3000;
+// Multer Setup (Memory Storage)
+const upload = (0, multer_1.default)({
+    storage: multer_1.default.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+});
 // Trust Proxy
 app.set('trust proxy', 1);
 // Configure CORS
@@ -50,7 +57,7 @@ app.use((req, res, next) => {
 });
 // Apply General Rate Limiter
 app.use(rateLimiter_1.generalLimiter);
-// Limit payload size
+// Limit payload size (for JSON)
 app.use(express_1.default.json({ limit: '10kb' }));
 app.get('/health', (req, res) => {
     res.json({ status: 'ok' });
@@ -70,6 +77,7 @@ const GenerateSchema = zod_1.z.object({
         return !suspicious.some(pattern => lower.includes(pattern));
     }, "Invalid topic detected. Please provide a clear educational topic.")
 });
+// Standard Text Generation Route
 app.post('/api/generate', auth_2.optionalAuth, rateLimiter_1.generationLimiter, async (req, res) => {
     const correlationId = req.id;
     try {
@@ -134,6 +142,55 @@ app.post('/api/generate', auth_2.optionalAuth, rateLimiter_1.generationLimiter, 
             error: 'Failed to submit job',
             details: error.message
         });
+    }
+});
+// File Upload Generation Route
+app.post('/api/generate/file', auth_2.optionalAuth, rateLimiter_1.generationLimiter, upload.single('file'), async (req, res) => {
+    const correlationId = req.id;
+    try {
+        if (!process.env.API_KEY)
+            throw new Error("API_KEY not configured.");
+        if (!req.file)
+            return res.status(400).json({ error: "No file uploaded." });
+        const userId = req.user?.id;
+        const originalName = req.file.originalname;
+        let extractedText = '';
+        // Extract Text based on Mimetype
+        if (req.file.mimetype === 'application/pdf') {
+            try {
+                const pdfData = await pdf_parse_1.default(req.file.buffer);
+                extractedText = pdfData.text;
+            }
+            catch (e) {
+                logger_1.logger.error("PDF Parse Failed", { correlationId });
+                return res.status(400).json({ error: "Failed to parse PDF file." });
+            }
+        }
+        else if (req.file.mimetype === 'text/plain') {
+            extractedText = req.file.buffer.toString('utf-8');
+        }
+        else {
+            return res.status(400).json({ error: "Unsupported file type. Use PDF or TXT." });
+        }
+        if (extractedText.trim().length < 50) {
+            return res.status(400).json({ error: "File content is too short to generate a study set." });
+        }
+        // Clean up text slightly to save tokens/bandwidth
+        extractedText = extractedText.replace(/\s+/g, ' ').trim();
+        // Use filename as the initial "Topic" identifier for the job
+        const topicLabel = `File: ${originalName}`;
+        // Add to Queue with the content
+        const jobId = await queueService.addJob(topicLabel, userId, undefined, correlationId, extractedText);
+        logger_1.logger.info(`File Job Accepted`, { jobId, filename: originalName, userId, correlationId });
+        res.status(202).json({
+            jobId,
+            status: 'pending',
+            message: 'File accepted. processing.'
+        });
+    }
+    catch (error) {
+        logger_1.logger.error('File submission error', { error: error.message, correlationId });
+        res.status(500).json({ error: 'Failed to process file upload', details: error.message });
     }
 });
 app.get('/api/jobs/:id', async (req, res) => {

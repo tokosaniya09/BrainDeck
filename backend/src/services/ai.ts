@@ -97,15 +97,15 @@ export class GeminiAIService implements IAIService {
     });
   }
 
-  async generateFlashcards(topic: string, correlationId?: string): Promise<StudySet> {
-    return aiCircuitBreaker.execute(async () => {
-      let currentPrompt = PROMPTS.generateStudySet(topic);
+  // Shared helper to handle the common generation logic
+  private async executeGeneration(prompt: string, correlationId?: string): Promise<StudySet> {
       let attempts = 0;
       const MAX_RETRIES = 2;
+      let currentPrompt = prompt;
 
       while (attempts <= MAX_RETRIES) {
         try {
-          logger.info(`🤖 AI Generation Attempt ${attempts + 1}/${MAX_RETRIES + 1}`, { topic, correlationId });
+          logger.info(`🤖 AI Generation Attempt ${attempts + 1}/${MAX_RETRIES + 1}`, { correlationId });
 
           const response = await this.ai.models.generateContent({
             model: "gemini-2.5-flash",
@@ -148,7 +148,7 @@ export class GeminiAIService implements IAIService {
              throw error; 
           }
 
-          currentPrompt = `${PROMPTS.generateStudySet(topic)}
+          currentPrompt = `${prompt}
           
           IMPORTANT: Your previous attempt failed. 
           Error details: ${error.message}
@@ -158,6 +158,19 @@ export class GeminiAIService implements IAIService {
       }
 
       throw new Error("Unexpected end of retry loop");
+  }
+
+  async generateFlashcards(topic: string, correlationId?: string): Promise<StudySet> {
+    return aiCircuitBreaker.execute(async () => {
+      const prompt = PROMPTS.generateStudySet(topic);
+      return this.executeGeneration(prompt, correlationId);
+    });
+  }
+
+  async generateFlashcardsFromContent(content: string, correlationId?: string): Promise<StudySet> {
+    return aiCircuitBreaker.execute(async () => {
+      const prompt = PROMPTS.generateStudySetFromContent(content);
+      return this.executeGeneration(prompt, correlationId);
     });
   }
 }
