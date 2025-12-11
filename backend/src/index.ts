@@ -44,7 +44,8 @@ app.set('trust proxy', 1);
 const allowedOrigins = [
   process.env.CLIENT_URL, 
   'http://localhost:5173', 
-  'http://localhost:3000'
+  'http://localhost:3000',
+  'https://brain-deck-g9pd.vercel.app'
 ].filter(Boolean);
 
 app.use(cors({
@@ -211,8 +212,6 @@ app.post('/api/generate/file', optionalAuth, generationLimiter as any, upload.si
     } else {
        return res.status(400).json({ error: "Unsupported file type. Use PDF, TXT, PNG, or JPG." });
     }
-
-    logger.info("File content:", extractedText.slice(0, 100), { correlationId });
 
     // Only check text length if it's NOT an image job
     if (!imageData && extractedText.trim().length < 50) {

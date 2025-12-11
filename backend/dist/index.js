@@ -40,7 +40,8 @@ app.set('trust proxy', 1);
 const allowedOrigins = [
     process.env.CLIENT_URL,
     'http://localhost:5173',
-    'http://localhost:3000'
+    'http://localhost:3000',
+    'https://brain-deck-g9pd.vercel.app'
 ].filter(Boolean);
 app.use((0, cors_1.default)({
     origin: function (origin, callback) {
@@ -191,7 +192,8 @@ app.post('/api/generate/file', auth_2.optionalAuth, rateLimiter_1.generationLimi
         else {
             return res.status(400).json({ error: "Unsupported file type. Use PDF, TXT, PNG, or JPG." });
         }
-        logger_1.logger.info("File content:", extractedText.slice(0, 100), { correlationId });
+        console.log(extractedText.length);
+        console.log("extracted text: ", extractedText);
         // Only check text length if it's NOT an image job
         if (!imageData && extractedText.trim().length < 50) {
             return res.status(400).json({ error: "File content is too short to generate a study set." });
