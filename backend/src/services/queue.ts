@@ -3,6 +3,7 @@ import IORedis from 'ioredis';
 import { IAIService } from '../interfaces/IAIService';
 import { IStudySetRepository } from '../repositories/StudySetRepository';
 import { logger } from '../utils/logger';
+import { IOCRService, ocrService as defaultOcrService, OCROutput } from './ocr';
 
 const QUEUE_NAME = 'flashcard-generation';
 
@@ -13,7 +14,7 @@ interface JobData {
   correlationId?: string;
   content?: string; // Raw text from file uploads
   instructions?: string; // Optional user instructions
-  image?: { // New: For image uploads
+  image?: { // For image uploads
     data: string; // base64
     mimeType: string;
   };
@@ -27,7 +28,8 @@ export class FlashcardQueueService {
   constructor(
     private aiService: IAIService,
     private studySetRepository: IStudySetRepository,
-    redisUrl: string = process.env.REDIS_URL || 'redis://localhost:6379'
+    redisUrl: string = process.env.REDIS_URL || 'redis://localhost:6379',
+    private ocrService: IOCRService = defaultOcrService
   ) {
     const connection = new IORedis(redisUrl, {
       maxRetriesPerRequest: null,
@@ -41,13 +43,69 @@ export class FlashcardQueueService {
       
       try {
         let studySet;
+        let ocrMetrics: (OCROutput & { applied: boolean; fallbackToVision?: boolean }) | null = null;
+        let effectiveContent = content;
         
-        // A. Generate Content via AI Service
-        if (content || image) {
-          // If raw content (text or image) is provided, generate from content
-          studySet = await this.aiService.generateFlashcardsFromContent(content, instructions, correlationId, image);
+        // A. If image upload: Run Tesseract OCR first to extract, clean, and vectorize text
+        if (image) {
+          try {
+            logger.info(`[Job ${job.id}] 🔍 Invoking Tesseract OCR on uploaded image...`, { mimeType: image.mimeType, correlationId });
+            const imageBuffer = Buffer.from(image.data, 'base64');
+            const ocrResult = await this.ocrService.extractText(imageBuffer, image.mimeType);
+
+            logger.info(`[Job ${job.id}] 📑 Tesseract OCR completed`, {
+              confidence: ocrResult.confidence,
+              wordCount: ocrResult.wordCount,
+              durationMs: ocrResult.durationMs,
+              correlationId,
+            });
+
+            // Threshold: Confidence >= 35% and at least 30 characters
+            if (ocrResult.confidence >= 35 && ocrResult.text.length >= 30) {
+              ocrMetrics = { ...ocrResult, applied: true };
+              effectiveContent = ocrResult.text;
+
+              // Step 1: Check Semantic Cache using pgvector for the extracted OCR text
+              let ocrEmbedding = embedding;
+              if (!ocrEmbedding) {
+                try {
+                  const textSnippet = effectiveContent.slice(0, 300);
+                  ocrEmbedding = await this.aiService.generateEmbedding(textSnippet);
+                  const semanticMatch: any = await this.studySetRepository.findBySemantics(ocrEmbedding, 0.22);
+                  if (semanticMatch) {
+                    logger.info(`[Job ${job.id}] 🎯 OCR Semantic Cache Hit! Reusing study set`, {
+                      cachedId: semanticMatch.id,
+                      correlationId,
+                    });
+                    if (userId && semanticMatch.id) {
+                      await this.studySetRepository.recordActivity(userId, semanticMatch.id);
+                    }
+                    return { ...semanticMatch, ocr: ocrMetrics, cacheHit: true };
+                  }
+                } catch (cacheErr: any) {
+                  logger.warn(`[Job ${job.id}] OCR Semantic cache lookup warning: ${cacheErr?.message}`);
+                }
+              }
+
+              // Step 2: Generate study set from token-efficient extracted text (saving ~75% tokens vs image tokens)
+              logger.info(`[Job ${job.id}] 🤖 Generating study set from OCR extracted text...`, { correlationId });
+              studySet = await this.aiService.generateFlashcardsFromContent(effectiveContent, instructions, correlationId);
+            } else {
+              // Low confidence fallback (e.g. abstract diagram, handwriting ambiguity)
+              logger.warn(`[Job ${job.id}] OCR confidence below threshold (${ocrResult.confidence}%), activating Gemini Multimodal Vision fallback`, { correlationId });
+              ocrMetrics = { ...ocrResult, applied: false, fallbackToVision: true };
+              studySet = await this.aiService.generateFlashcardsFromContent(undefined, instructions, correlationId, image);
+            }
+          } catch (ocrError: any) {
+            logger.warn(`[Job ${job.id}] OCR extraction error, falling back to Multimodal Vision`, {
+              error: ocrError?.message,
+              correlationId,
+            });
+            studySet = await this.aiService.generateFlashcardsFromContent(undefined, instructions, correlationId, image);
+          }
+        } else if (effectiveContent) {
+          studySet = await this.aiService.generateFlashcardsFromContent(effectiveContent, instructions, correlationId);
         } else {
-          // Standard topic-based generation
           studySet = await this.aiService.generateFlashcards(topic, correlationId);
         }
         
@@ -72,8 +130,8 @@ export class FlashcardQueueService {
 
         logger.info(`[Job ${job.id}] ✅ Completed`, { newSetId, userId, correlationId });
         
-        // Return the study set WITH the new database ID attached
-        return { ...studySet, id: newSetId };
+        // Return the study set WITH the new database ID and OCR metadata attached
+        return { ...studySet, id: newSetId, ocr: ocrMetrics };
 
       } catch (error) {
         logger.error(`[Job ${job.id}] ❌ Failed`, { error, correlationId });

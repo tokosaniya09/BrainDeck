@@ -4,21 +4,24 @@ import cors from 'cors';
 import { z } from 'zod'; 
 import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
-import pdf from 'pdf-parse';
+import * as pdfModule from 'pdf-parse';
+const pdf = (pdfModule as any).default || pdfModule;
 
 import { studySetRepository, initDB } from './db';
 import authRoutes from './routes/auth';
 import { requireAuth, optionalAuth } from './middleware/auth';
 import { generalLimiter, generationLimiter } from './middleware/rateLimiter';
 import { logger } from './utils/logger';
+import { GenerateSchema } from './utils/validation';
 
 // Services (DI Injection)
 import { GeminiAIService } from './services/ai';
 import { FlashcardQueueService } from './services/queue';
+import { ocrService } from './services/ocr';
 
 // Initialize Services
 const aiService = new GeminiAIService(process.env.API_KEY || '');
-const queueService = new FlashcardQueueService(aiService, studySetRepository);
+const queueService = new FlashcardQueueService(aiService, studySetRepository, undefined, ocrService);
 
 if (!process.env.API_KEY) {
   logger.error("❌ FATAL: API_KEY is missing in backend/.env file.");
@@ -83,19 +86,6 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 
 // --- Job Queue Endpoints ---
-
-// Validation Schema
-const GenerateSchema = z.object({
-  topic: z.string()
-    .trim()
-    .min(2, "Topic is too short")
-    .max(200, "Topic is too long (max 200 characters)")
-    .refine((val) => {
-      const lower = val.toLowerCase();
-      const suspicious = ["ignore previous", "system prompt", "reveal your instructions"];
-      return !suspicious.some(pattern => lower.includes(pattern));
-    }, "Invalid topic detected. Please provide a clear educational topic.")
-});
 
 // Standard Text Generation Route
 app.post('/api/generate', optionalAuth, generationLimiter as any, async (req: any, res: any) => {
@@ -215,6 +205,11 @@ app.post('/api/generate/file', optionalAuth, generationLimiter as any, upload.si
 
     // Only check text length if it's NOT an image job
     if (!imageData && extractedText.trim().length < 50) {
+      if (mimeType === 'application/pdf') {
+        return res.status(400).json({ 
+          error: "Scanned PDF detected (no digital text layer found). Please upload image pages (PNG/JPG) to extract text via our Tesseract OCR engine, or provide a text-searchable PDF." 
+        });
+      }
       return res.status(400).json({ error: "File content is too short to generate a study set." });
     }
 
@@ -247,6 +242,28 @@ app.post('/api/generate/file', optionalAuth, generationLimiter as any, upload.si
   } catch (error: any) {
     logger.error('File submission error', { error: error.message, correlationId });
     res.status(500).json({ error: 'Failed to process file upload', details: error.message });
+  }
+});
+
+// Standalone OCR Endpoint: Extracts and returns text, confidence, and metrics
+app.post('/api/ocr', upload.single('image') as any, async (req: any, res: any) => {
+  const correlationId = req.id;
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No image file provided." });
+    }
+    if (!req.file.mimetype.startsWith('image/')) {
+      return res.status(400).json({ error: "File must be an image (PNG, JPG, WebP)." });
+    }
+
+    const ocrResult = await ocrService.extractText(req.file.buffer, req.file.mimetype);
+    res.json({
+      status: 'success',
+      ...ocrResult
+    });
+  } catch (error: any) {
+    logger.error("OCR Endpoint Error", { error: error?.message, correlationId });
+    res.status(500).json({ error: error?.message || "OCR extraction failed" });
   }
 });
 

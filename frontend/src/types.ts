@@ -12,6 +12,16 @@ export interface QuizQuestion {
   answer_index: number;
 }
 
+export interface OCROutput {
+  text: string;
+  confidence: number;
+  wordCount: number;
+  lineCount: number;
+  durationMs: number;
+  applied?: boolean;
+  fallbackToVision?: boolean;
+}
+
 export interface StudySet {
   id?: number;
   topic: string;
@@ -19,4 +29,6 @@ export interface StudySet {
   estimated_study_time_minutes: number;
   flashcards: Flashcard[];
   example_quiz_questions: QuizQuestion[];
+  ocr?: OCROutput;
+  cacheHit?: boolean;
 }

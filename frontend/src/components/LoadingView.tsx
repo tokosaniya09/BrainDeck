@@ -10,9 +10,10 @@ const LoadingView: React.FC<LoadingViewProps> = ({ status }) => {
   const getLoadingMessage = () => {
     switch (status) {
       case 'queued': return 'Waiting in queue...';
-      case 'processing': return 'AI is generating content...';
+      case 'ocr_processing': return 'Extracting text with Tesseract OCR...';
+      case 'processing': return 'AI is analyzing text and creating study sets...';
       case 'loading_history': return 'Loading from database...';
-      case 'initiating': return 'Contacting server...';
+      case 'initiating': return 'Uploading file to processing pipeline...';
       default: return 'Generating your study plan...';
     }
   };

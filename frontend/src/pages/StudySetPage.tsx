@@ -84,13 +84,23 @@ const StudySetPage: React.FC = () => {
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
             <div>
               <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">{studySet.topic}</h2>
-              <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400 font-medium">
-                <span className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
+              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500 dark:text-slate-400 font-medium">
+                <span className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md">
                   <Clock className="w-3.5 h-3.5" /> {studySet.estimated_study_time_minutes} min
                 </span>
-                <span className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
+                <span className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md">
                   <BookOpen className="w-3.5 h-3.5" /> {studySet.flashcards.length} cards
                 </span>
+                {studySet.ocr && (
+                  <span className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50 px-2.5 py-1 rounded-md text-xs font-medium">
+                    Tesseract OCR: {studySet.ocr.confidence}% Confidence ({studySet.ocr.wordCount} words)
+                  </span>
+                )}
+                {studySet.cacheHit && (
+                  <span className="flex items-center gap-1.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/50 px-2.5 py-1 rounded-md text-xs font-medium">
+                    ⚡ Instant Semantic Cache Hit
+                  </span>
+                )}
               </div>
             </div>
           </div>
