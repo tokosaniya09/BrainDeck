@@ -101,11 +101,3 @@ Visit `http://localhost:5173` to start learning!
 ## 📂 Project Structure
 
 See `PROJECT_MAP.md` for a detailed breakdown of the file structure and architecture diagrams.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please fork the repository and submit a pull request.
-
-<!-- ## 📄 License
-
-This project is open source and available under the [MIT License](LICENSE). -->
