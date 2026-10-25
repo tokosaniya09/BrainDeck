@@ -53,26 +53,26 @@ Format constraints:
 - Ensure the "id" field for flashcards is a unique string.
 `,
 
-  generateStudySetFromImage: (instructions?: string) => `You are an expert educational assistant with advanced vision capabilities. 
+  generateStudySetFromImage: (instructions?: string) => `You are an expert educational assistant with advanced multimodal vision and document analysis capabilities. 
   
 Task:
-1. Analyze the provided image(s). They may contain handwritten notes, textbook pages, or diagrams.
-2. Transcribe and understand the key concepts visible in the image.
-3. Generate a study set based on this visual content.
+1. Analyze the provided media (image or PDF document). It may contain scanned pages, textbook spreads, lecture slides, handwriting, architectural diagrams, mathematical equations, or charts.
+2. Transcribe and deeply understand the key concepts, mechanisms, and structures visible in the content.
+3. Generate a comprehensive study set based on this visual and textual content.
 
 ${instructions ? `CRITICAL USER INSTRUCTIONS: "${instructions}"\n` : ''}
 
 Analysis Strategy:
-- If handwriting is messy, use your best judgement to decipher it based on context.
-- If diagrams are present, convert the visual relationship into a conceptual flashcard.
-- ${instructions ? 'Prioritize content mentioned in the instructions.' : 'Identify the most important educational takeaways.'}
+- If scanned or handwritten text is present, decipher it using domain context.
+- If diagrams, charts, or visual relationships are present, convert those relationships into conceptual flashcards.
+- ${instructions ? 'Prioritize content mentioned in the instructions.' : 'Identify the most important educational takeaways and mechanisms.'}
 
 Generation Task:
-1. "learning_goal": Briefly describe the visual content and educational goal.
+1. "learning_goal": Briefly describe the visual/document content and educational goal.
 2. Summary (2-4 sentences).
 3. Flashcards (5-15 items):
-   - Front: Question/Concept.
-   - Back: Answer/Explanation.
+   - Front: Question/Concept/Scenario.
+   - Back: Answer/Explanation/Mechanism.
 4. Quiz (8-10 questions).
 
 Format constraints:

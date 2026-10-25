@@ -192,24 +192,31 @@ app.post('/api/generate/file', optionalAuth, generationLimiter as any, upload.si
     } else if (mimeType === 'application/pdf') {
        try {
          const pdfData = await (pdf as any)(req.file.buffer);
-         extractedText = pdfData.text;
+         extractedText = (pdfData.text || '').replace(/\s+/g, ' ').trim();
        } catch (e) {
-         logger.error("PDF Parse Failed", { correlationId });
-         return res.status(400).json({ error: "Failed to parse PDF file." });
+         logger.warn("PDF digital text extraction had warnings, will proceed via multimodal pipeline", { correlationId });
+       }
+
+       // Zero-Friction Handling:
+       // If the PDF has digital text (>= 50 chars), extractedText is preserved for fast token-efficient processing & semantic caching.
+       // If the PDF is scanned, image-only, or handwritten (< 50 chars), we NEVER reject it.
+       // Instead, we seamlessly pass the PDF buffer to Gemini's native multimodal document understanding pipeline.
+       if (extractedText.length < 50) {
+         logger.info("Scanned/Image-heavy PDF detected (< 50 chars digital text). Routing to native Gemini Multimodal Document Processing.", { correlationId });
+         imageData = {
+           data: req.file.buffer.toString('base64'),
+           mimeType: 'application/pdf'
+         };
+         extractedText = '';
        }
     } else if (mimeType === 'text/plain') {
-       extractedText = req.file.buffer.toString('utf-8');
+       extractedText = req.file.buffer.toString('utf-8').replace(/\s+/g, ' ').trim();
     } else {
        return res.status(400).json({ error: "Unsupported file type. Use PDF, TXT, PNG, or JPG." });
     }
 
-    // Only check text length if it's NOT an image job
-    if (!imageData && extractedText.trim().length < 50) {
-      if (mimeType === 'application/pdf') {
-        return res.status(400).json({ 
-          error: "Scanned PDF detected (no digital text layer found). Please upload image pages (PNG/JPG) to extract text via our Tesseract OCR engine, or provide a text-searchable PDF." 
-        });
-      }
+    // Only reject if it's text without enough characters and no multimodal media
+    if (!imageData && extractedText.length < 50) {
       return res.status(400).json({ error: "File content is too short to generate a study set." });
     }
 

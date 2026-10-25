@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -6,21 +39,23 @@ Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
-const zod_1 = require("zod");
 const uuid_1 = require("uuid");
 const multer_1 = __importDefault(require("multer"));
-const pdf_parse_1 = __importDefault(require("pdf-parse"));
+const pdfModule = __importStar(require("pdf-parse"));
+const pdf = pdfModule.default || pdfModule;
 const db_1 = require("./db");
 const auth_1 = __importDefault(require("./routes/auth"));
 const auth_2 = require("./middleware/auth");
 const rateLimiter_1 = require("./middleware/rateLimiter");
 const logger_1 = require("./utils/logger");
+const validation_1 = require("./utils/validation");
 // Services (DI Injection)
 const ai_1 = require("./services/ai");
 const queue_1 = require("./services/queue");
+const ocr_1 = require("./services/ocr");
 // Initialize Services
 const aiService = new ai_1.GeminiAIService(process.env.API_KEY || '');
-const queueService = new queue_1.FlashcardQueueService(aiService, db_1.studySetRepository);
+const queueService = new queue_1.FlashcardQueueService(aiService, db_1.studySetRepository, undefined, ocr_1.ocrService);
 if (!process.env.API_KEY) {
     logger_1.logger.error("❌ FATAL: API_KEY is missing in backend/.env file.");
 }
@@ -73,18 +108,6 @@ app.get('/health', (req, res) => {
 // --- Auth Routes ---
 app.use('/api/auth', auth_1.default);
 // --- Job Queue Endpoints ---
-// Validation Schema
-const GenerateSchema = zod_1.z.object({
-    topic: zod_1.z.string()
-        .trim()
-        .min(2, "Topic is too short")
-        .max(200, "Topic is too long (max 200 characters)")
-        .refine((val) => {
-        const lower = val.toLowerCase();
-        const suspicious = ["ignore previous", "system prompt", "reveal your instructions"];
-        return !suspicious.some(pattern => lower.includes(pattern));
-    }, "Invalid topic detected. Please provide a clear educational topic.")
-});
 // Standard Text Generation Route
 app.post('/api/generate', auth_2.optionalAuth, rateLimiter_1.generationLimiter, async (req, res) => {
     const correlationId = req.id;
@@ -92,7 +115,7 @@ app.post('/api/generate', auth_2.optionalAuth, rateLimiter_1.generationLimiter, 
         if (!process.env.API_KEY) {
             throw new Error("API_KEY is not configured on the server.");
         }
-        const validation = GenerateSchema.safeParse(req.body);
+        const validation = validation_1.GenerateSchema.safeParse(req.body);
         if (!validation.success) {
             return res.status(400).json({ error: validation.error.issues[0].message });
         }
@@ -178,22 +201,33 @@ app.post('/api/generate/file', auth_2.optionalAuth, rateLimiter_1.generationLimi
         }
         else if (mimeType === 'application/pdf') {
             try {
-                const pdfData = await pdf_parse_1.default(req.file.buffer);
-                extractedText = pdfData.text;
+                const pdfData = await pdf(req.file.buffer);
+                extractedText = (pdfData.text || '').replace(/\s+/g, ' ').trim();
             }
             catch (e) {
-                logger_1.logger.error("PDF Parse Failed", { correlationId });
-                return res.status(400).json({ error: "Failed to parse PDF file." });
+                logger_1.logger.warn("PDF digital text extraction had warnings, will proceed via multimodal pipeline", { correlationId });
+            }
+            // Zero-Friction Handling:
+            // If the PDF has digital text (>= 50 chars), extractedText is preserved for fast token-efficient processing & semantic caching.
+            // If the PDF is scanned, image-only, or handwritten (< 50 chars), we NEVER reject it.
+            // Instead, we seamlessly pass the PDF buffer to Gemini's native multimodal document understanding pipeline.
+            if (extractedText.length < 50) {
+                logger_1.logger.info("Scanned/Image-heavy PDF detected (< 50 chars digital text). Routing to native Gemini Multimodal Document Processing.", { correlationId });
+                imageData = {
+                    data: req.file.buffer.toString('base64'),
+                    mimeType: 'application/pdf'
+                };
+                extractedText = '';
             }
         }
         else if (mimeType === 'text/plain') {
-            extractedText = req.file.buffer.toString('utf-8');
+            extractedText = req.file.buffer.toString('utf-8').replace(/\s+/g, ' ').trim();
         }
         else {
             return res.status(400).json({ error: "Unsupported file type. Use PDF, TXT, PNG, or JPG." });
         }
-        // Only check text length if it's NOT an image job
-        if (!imageData && extractedText.trim().length < 50) {
+        // Only reject if it's text without enough characters and no multimodal media
+        if (!imageData && extractedText.length < 50) {
             return res.status(400).json({ error: "File content is too short to generate a study set." });
         }
         if (extractedText) {
@@ -214,6 +248,27 @@ app.post('/api/generate/file', auth_2.optionalAuth, rateLimiter_1.generationLimi
     catch (error) {
         logger_1.logger.error('File submission error', { error: error.message, correlationId });
         res.status(500).json({ error: 'Failed to process file upload', details: error.message });
+    }
+});
+// Standalone OCR Endpoint: Extracts and returns text, confidence, and metrics
+app.post('/api/ocr', upload.single('image'), async (req, res) => {
+    const correlationId = req.id;
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: "No image file provided." });
+        }
+        if (!req.file.mimetype.startsWith('image/')) {
+            return res.status(400).json({ error: "File must be an image (PNG, JPG, WebP)." });
+        }
+        const ocrResult = await ocr_1.ocrService.extractText(req.file.buffer, req.file.mimetype);
+        res.json({
+            status: 'success',
+            ...ocrResult
+        });
+    }
+    catch (error) {
+        logger_1.logger.error("OCR Endpoint Error", { error: error?.message, correlationId });
+        res.status(500).json({ error: error?.message || "OCR extraction failed" });
     }
 });
 app.get('/api/jobs/:id', async (req, res) => {

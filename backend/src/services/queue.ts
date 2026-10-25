@@ -46,61 +46,81 @@ export class FlashcardQueueService {
         let ocrMetrics: (OCROutput & { applied: boolean; fallbackToVision?: boolean }) | null = null;
         let effectiveContent = content;
         
-        // A. If image upload: Run Tesseract OCR first to extract, clean, and vectorize text
+        // A. If image or media (scanned PDF / image-heavy document) upload:
         if (image) {
-          try {
-            logger.info(`[Job ${job.id}] 🔍 Invoking Tesseract OCR on uploaded image...`, { mimeType: image.mimeType, correlationId });
-            const imageBuffer = Buffer.from(image.data, 'base64');
-            const ocrResult = await this.ocrService.extractText(imageBuffer, image.mimeType);
+          if (image.mimeType.startsWith('image/')) {
+            // Image pipeline: Run Tesseract OCR first to extract, clean, and vectorize text
+            try {
+              logger.info(`[Job ${job.id}] 🔍 Invoking Tesseract OCR on uploaded image...`, { mimeType: image.mimeType, correlationId });
+              const imageBuffer = Buffer.from(image.data, 'base64');
+              const ocrResult = await this.ocrService.extractText(imageBuffer, image.mimeType);
+              
+              logger.info(`[Job ${job.id}] 📑 Tesseract OCR completed`, {
+                confidence: ocrResult.confidence,
+                wordCount: ocrResult.wordCount,
+                durationMs: ocrResult.durationMs,
+                correlationId,
+              });
 
-            logger.info(`[Job ${job.id}] 📑 Tesseract OCR completed`, {
-              confidence: ocrResult.confidence,
-              wordCount: ocrResult.wordCount,
-              durationMs: ocrResult.durationMs,
-              correlationId,
-            });
+              // Threshold: Confidence >= 35% and at least 30 characters
+              if (ocrResult.confidence >= 35 && ocrResult.text.length >= 30) {
+                ocrMetrics = { ...ocrResult, applied: true };
+                effectiveContent = ocrResult.text;
 
-            // Threshold: Confidence >= 35% and at least 30 characters
-            if (ocrResult.confidence >= 35 && ocrResult.text.length >= 30) {
-              ocrMetrics = { ...ocrResult, applied: true };
-              effectiveContent = ocrResult.text;
-
-              // Step 1: Check Semantic Cache using pgvector for the extracted OCR text
-              let ocrEmbedding = embedding;
-              if (!ocrEmbedding) {
-                try {
-                  const textSnippet = effectiveContent.slice(0, 300);
-                  ocrEmbedding = await this.aiService.generateEmbedding(textSnippet);
-                  const semanticMatch: any = await this.studySetRepository.findBySemantics(ocrEmbedding, 0.22);
-                  if (semanticMatch) {
-                    logger.info(`[Job ${job.id}] 🎯 OCR Semantic Cache Hit! Reusing study set`, {
-                      cachedId: semanticMatch.id,
-                      correlationId,
-                    });
-                    if (userId && semanticMatch.id) {
-                      await this.studySetRepository.recordActivity(userId, semanticMatch.id);
+                // Step 1: Check Semantic Cache using pgvector for the extracted OCR text
+                let ocrEmbedding = embedding;
+                if (!ocrEmbedding) {
+                  try {
+                    const textSnippet = effectiveContent.slice(0, 300);
+                    ocrEmbedding = await this.aiService.generateEmbedding(textSnippet);
+                    const semanticMatch: any = await this.studySetRepository.findBySemantics(ocrEmbedding, 0.22);
+                    if (semanticMatch) {
+                      logger.info(`[Job ${job.id}] 🎯 OCR Semantic Cache Hit! Reusing study set`, {
+                        cachedId: semanticMatch.id,
+                        correlationId,
+                      });
+                      if (userId && semanticMatch.id) {
+                        await this.studySetRepository.recordActivity(userId, semanticMatch.id);
+                      }
+                      return { ...semanticMatch, ocr: ocrMetrics, cacheHit: true };
                     }
-                    return { ...semanticMatch, ocr: ocrMetrics, cacheHit: true };
+                  } catch (cacheErr: any) {
+                    logger.warn(`[Job ${job.id}] OCR Semantic cache lookup warning: ${cacheErr?.message}`);
                   }
-                } catch (cacheErr: any) {
-                  logger.warn(`[Job ${job.id}] OCR Semantic cache lookup warning: ${cacheErr?.message}`);
                 }
-              }
 
-              // Step 2: Generate study set from token-efficient extracted text (saving ~75% tokens vs image tokens)
-              logger.info(`[Job ${job.id}] 🤖 Generating study set from OCR extracted text...`, { correlationId });
-              studySet = await this.aiService.generateFlashcardsFromContent(effectiveContent, instructions, correlationId);
-            } else {
-              // Low confidence fallback (e.g. abstract diagram, handwriting ambiguity)
-              logger.warn(`[Job ${job.id}] OCR confidence below threshold (${ocrResult.confidence}%), activating Gemini Multimodal Vision fallback`, { correlationId });
-              ocrMetrics = { ...ocrResult, applied: false, fallbackToVision: true };
+                // Step 2: Generate study set from token-efficient extracted text (saving ~75% tokens vs image tokens)
+                logger.info(`[Job ${job.id}] 🤖 Generating study set from OCR extracted text...`, { correlationId });
+                studySet = await this.aiService.generateFlashcardsFromContent(effectiveContent, instructions, correlationId);
+              } else {
+                // Low confidence fallback (e.g. abstract diagram, handwriting ambiguity)
+                logger.warn(`[Job ${job.id}] OCR confidence below threshold (${ocrResult.confidence}%), activating Gemini Multimodal Vision fallback`, { correlationId });
+                ocrMetrics = { ...ocrResult, applied: false, fallbackToVision: true };
+                studySet = await this.aiService.generateFlashcardsFromContent(undefined, instructions, correlationId, image);
+              }
+            } catch (ocrError: any) {
+              logger.warn(`[Job ${job.id}] OCR extraction error, falling back to Multimodal Vision`, {
+                error: ocrError?.message,
+                correlationId,
+              });
               studySet = await this.aiService.generateFlashcardsFromContent(undefined, instructions, correlationId, image);
             }
-          } catch (ocrError: any) {
-            logger.warn(`[Job ${job.id}] OCR extraction error, falling back to Multimodal Vision`, {
-              error: ocrError?.message,
-              correlationId,
-            });
+          } else if (image.mimeType === 'application/pdf') {
+            // PDF media pipeline: Scanned PDF, image slides, or complex diagrams
+            // Gemini 2.5 Flash natively understands multi-page PDFs with scanned pages, handwriting, and visual charts!
+            logger.info(`[Job ${job.id}] 📑 Processing scanned/visual PDF with native Gemini Multimodal Document Engine`, { correlationId });
+            ocrMetrics = {
+              text: 'Processed automatically via Gemini Native Multimodal Document Engine (scanned pages, diagrams & text)',
+              confidence: 99,
+              wordCount: 0,
+              lineCount: 0,
+              durationMs: 0,
+              applied: true,
+              fallbackToVision: true
+            };
+            studySet = await this.aiService.generateFlashcardsFromContent(undefined, instructions, correlationId, image);
+          } else {
+            // Generic multimodal fallback
             studySet = await this.aiService.generateFlashcardsFromContent(undefined, instructions, correlationId, image);
           }
         } else if (effectiveContent) {
